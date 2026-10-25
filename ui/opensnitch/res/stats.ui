@@ -95,8 +95,11 @@
        <layout class="QHBoxLayout" name="horizontalLayout_10">
         <item>
          <widget class="QPushButton" name="actionsButton">
+          <property name="toolTip">
+           <string>Open application actions</string>
+          </property>
           <property name="text">
-           <string/>
+           <string>Actions</string>
           </property>
           <property name="icon">
            <iconset theme="format-justify-fill">
@@ -115,8 +118,11 @@
             <verstretch>0</verstretch>
            </sizepolicy>
           </property>
+          <property name="toolTip">
+           <string>Open preferences</string>
+          </property>
           <property name="text">
-           <string/>
+           <string>Preferences</string>
           </property>
           <property name="icon">
            <iconset theme="preferences-system">
@@ -139,7 +145,7 @@
            <string>Create a new rule</string>
           </property>
           <property name="text">
-           <string/>
+           <string>New rule</string>
           </property>
           <property name="icon">
            <iconset theme="document-new">
@@ -152,8 +158,11 @@
         </item>
         <item>
          <widget class="QPushButton" name="fwButton">
+          <property name="toolTip">
+           <string>Open system firewall settings</string>
+          </property>
           <property name="text">
-           <string/>
+           <string>Firewall</string>
           </property>
           <property name="icon">
            <iconset theme="security-high">
@@ -258,7 +267,7 @@
            <string>Start or Stop interception</string>
           </property>
           <property name="text">
-           <string/>
+           <string>Interception</string>
           </property>
           <property name="icon">
            <iconset theme="media-playback-start">
