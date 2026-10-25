@@ -74,7 +74,12 @@ class LinuxDesktopParser(threading.Thread):
                 if entry is None:
                     continue
                 command, info = entry
-                for key in dict.fromkeys((command, os.path.realpath(command))):
+                target = self._launcher_target(command)
+                keys = (command, os.path.realpath(command))
+                if target:
+                    keys += (target, os.path.realpath(target))
+                    files.extend((command, os.path.realpath(command)))
+                for key in dict.fromkeys(keys):
                     if key in apps and apps[key][:2] != info[:2]:
                         ambiguous.add(key)
                     else:
@@ -86,6 +91,38 @@ class LinuxDesktopParser(threading.Thread):
             self.apps_by_name = {key: values[0] for key, values in by_name.items()
                                  if len(values) == 1}
             self.files = files
+
+    @staticmethod
+    def _launcher_target(command):
+        """Recognize a single static exec wrapper without evaluating shell code."""
+        try:
+            path = Path(os.path.realpath(command))
+            with path.open('rb') as stream:
+                data = stream.read(4097)
+            if len(data) > 4096 or not data.startswith((b'#!/bin/sh', b'#!/bin/bash', b'#!/usr/bin/sh', b'#!/usr/bin/bash')):
+                return ''
+            lines = [line.strip() for line in data.decode('utf8').splitlines()
+                     if line.strip() and not line.lstrip().startswith('#')]
+            if len(lines) != 1:
+                return ''
+            prefix = 'exec "$(dirname "$(readlink -f "$0")")/'
+            suffix = '" "$@"'
+            line = lines[0]
+            if line.startswith(prefix) and line.endswith(suffix):
+                relative = line[len(prefix):-len(suffix)]
+                if not re.fullmatch(r'[A-Za-z0-9_./+-]+', relative) or '..' in Path(relative).parts:
+                    return ''
+                target = path.parent / relative
+            else:
+                args = shlex.split(line)
+                if len(args) != 3 or args[0] != 'exec' or args[2] != '$@' or not os.path.isabs(args[1]):
+                    return ''
+                if not re.fullmatch(r'[A-Za-z0-9_./ +\-]+', args[1]):
+                    return ''
+                target = Path(args[1])
+            return str(target) if target.is_file() and os.access(target, os.X_OK) else ''
+        except (OSError, UnicodeError, ValueError):
+            return ''
 
     def get_locale(self):
         try:

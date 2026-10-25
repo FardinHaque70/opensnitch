@@ -1,4 +1,6 @@
+from html import escape
 
+from opensnitch.application_identity import ApplicationIdentityService
 from opensnitch.nodes import Nodes
 from opensnitch.database import Database
 from opensnitch.database.enums import ConnFields
@@ -15,6 +17,7 @@ class ConnDetails(InfoWindow):
 
         self._db = Database.instance()
         self._nodes = Nodes.instance()
+        self._identity = ApplicationIdentityService.instance()
 
     def showByField(self, field, value):
         records = self._db.get_connection_by_field(field, value)
@@ -26,6 +29,17 @@ class ConnDetails(InfoWindow):
         if self._nodes.is_local(node):
             uid = Utils.get_user_id(uid)
 
+        path = str(records.value(ConnFields.Process) or '')
+        identity = self._identity.resolve(node, path)
+        self.setWindowTitle(QC.translate('stats', 'Connection details: {0}').format(identity.display_name))
+        self.setWindowIcon(self._identity.icon_for(identity, self))
+        fields = [records.value(ConnFields.Action).upper(), records.value(ConnFields.Time), path,
+                  records.value(ConnFields.Cmdline), records.value(ConnFields.CWD), uid,
+                  records.value(ConnFields.PID), node, records.value(ConnFields.Protocol).upper(),
+                  records.value(ConnFields.SrcPort), records.value(ConnFields.SrcIP), records.value(ConnFields.DstIP),
+                  records.value(ConnFields.DstHost), records.value(ConnFields.DstPort), records.value(ConnFields.Rule)]
+        fields = [escape(str(value)) for value in fields]
+        fields[2] = escape(identity.display_name) + '<br>' + escape(path)
         conn_text = QC.translate("stats", """
 <b>{0}</b><br><br>
 <b>Time:</b> {1}<br><br>
@@ -39,22 +53,6 @@ class ConnDetails(InfoWindow):
 <br><br>
 <b>Rule:</b><br>
 {14}
-""".format(
-                    records.value(ConnFields.Action).upper(),
-                    records.value(ConnFields.Time),
-                    records.value(ConnFields.Process),
-                    records.value(ConnFields.Cmdline),
-                    records.value(ConnFields.CWD),
-                    uid,
-                    records.value(ConnFields.PID),
-                    node,
-                    records.value(ConnFields.Protocol).upper(),
-                    records.value(ConnFields.SrcPort),
-                    records.value(ConnFields.SrcIP),
-                    records.value(ConnFields.DstIP),
-                    records.value(ConnFields.DstHost),
-                    records.value(ConnFields.DstPort),
-                    records.value(ConnFields.Rule)
-                ))
+""").format(*fields)
 
         self.showText(conn_text)

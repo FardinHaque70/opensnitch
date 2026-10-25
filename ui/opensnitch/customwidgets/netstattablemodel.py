@@ -1,6 +1,7 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QStandardItemModel
 from opensnitch.customwidgets.generictableview import GenericTableModel
+from opensnitch.customwidgets.applicationidentity import IdentityPresentation
 from opensnitch.utils import sockets
 
 class NetstatTableModel(GenericTableModel):
@@ -29,3 +30,22 @@ class NetstatTableModel(GenericTableModel):
                 except Exception as e:
                     print("[socketsmodel] exception:", e, index.row(), index.column())
         return QStandardItemModel.data(self, index, role)
+
+
+class IdentityNetstatTableModel(IdentityPresentation, NetstatTableModel):
+    def __init__(self, table_name, headers, resolver, source_node, view):
+        super().__init__(table_name, headers)
+        self.snapshot_node = None
+        self._source_node = source_node
+        self.configure_identity(headers, resolver, self.process_identity, view)
+
+    def process_identity(self, index, row):
+        if index.column() == 1 and len(row) == len(self._identity_headers):
+            return self._identity_resolver.resolve(self.snapshot_node, row[1])
+        return None
+
+    def fillVisibleRows(self, query, upper_bound, force=False):
+        # The picker can change while a previous snapshot remains visible.
+        # Bind provenance when reading rows, never from the current picker.
+        self.snapshot_node = self._source_node()
+        super().fillVisibleRows(query, upper_bound, force)

@@ -17,10 +17,12 @@ class ApplicationIdentity:
     display_name: str
     icon_reference: str
     exact: bool
+    icon_owner: str = ''
 
     @property
     def tooltip(self):
-        return '\n'.join(filter(None, (self.display_name, self.executable_path, self.node_id)))
+        artwork = QtCore.QCoreApplication.translate('applications', 'Application artwork: {0}').format(self.icon_owner) if self.icon_owner else ''
+        return '\n'.join(filter(None, (self.display_name, self.executable_path, self.node_id, artwork)))
 
 
 def icon_directories():
@@ -52,7 +54,25 @@ class _IndexWorker(QtCore.QThread):
                         path = Path(directory) / filename
                         if path.suffix.lower() in ('.png', '.xpm'):
                             icons.setdefault(path.stem, []).append(str(path))
-            self.ready.emit((parser.apps, parser.ambiguous, parser.files, icons))
+            roots = {}
+            ambiguous_roots = set()
+            for executable, entry in parser.apps.items():
+                directory = str(Path(executable).parent)
+                if (executable in parser.ambiguous or not entry[1]
+                        or not any(directory.startswith(prefix) for prefix in ('/usr/lib/', '/usr/lib64/', '/opt/'))):
+                    continue
+                # Never borrow artwork for a shared library/bin directory.
+                # Require an app-specific directory named by its metadata.
+                identifiers = {Path(executable).name.casefold(), Path(entry[3]).stem.casefold(),
+                               Path(entry[1]).stem.casefold()}
+                if Path(directory).name.casefold() not in identifiers:
+                    continue
+                if directory in roots and roots[directory][:2] != entry[:2]:
+                    ambiguous_roots.add(directory)
+                roots[directory] = entry
+            for root in ambiguous_roots:
+                roots.pop(root, None)
+            self.ready.emit((parser.apps, parser.ambiguous, parser.files, icons, roots))
         except Exception:
             logging.exception('Could not refresh application metadata; retaining previous index')
 
@@ -74,6 +94,7 @@ class ApplicationIdentityService(QtCore.QObject):
         self._entries = {}
         self._ambiguous = set()
         self._icon_paths = {}
+        self._bundle_roots = {}
         self._local_nodes = set()
         self._cache = {}
         self._icons = {}
@@ -107,6 +128,9 @@ class ApplicationIdentityService(QtCore.QObject):
     def is_local_node(self, node_id):
         return node_id in self._local_nodes
 
+    def installed_executables(self):
+        return tuple(path for path in self._entries if path not in self._ambiguous)
+
     def resolve(self, node_id, executable_path):
         key = (node_id or '', executable_path or '')
         if key in self._cache:
@@ -115,13 +139,22 @@ class ApplicationIdentityService(QtCore.QObject):
         name = os.path.basename(path.rstrip('/')) or QtCore.QCoreApplication.translate('applications', 'Unknown application')
         icon = ''
         exact = False
+        icon_owner = ''
         lookup = os.path.normpath(path) if os.path.isabs(path) else ''
         if node_id in self._local_nodes and lookup and lookup not in self._ambiguous:
             entry = self._entries.get(lookup)
             if entry is not None:
                 name, icon = entry[0], entry[1] or ''
                 exact = True
-        identity = ApplicationIdentity(node_id, path, name, icon, exact)
+            else:
+                # Companion executables keep their own name and fallback
+                # identity. Only the containing application's artwork is used.
+                for directory in sorted(self._bundle_roots, key=len, reverse=True):
+                    if lookup.startswith(directory + '/'):
+                        owner = self._bundle_roots[directory]
+                        icon, icon_owner = owner[1], owner[0]
+                        break
+        identity = ApplicationIdentity(node_id, path, name, icon, exact, icon_owner)
         self._cache[key] = identity
         return identity
 
@@ -167,7 +200,8 @@ class ApplicationIdentityService(QtCore.QObject):
     def _accept_index(self, snapshot):
         if self._stopped:
             return
-        self._entries, self._ambiguous, files, self._icon_paths = snapshot
+        self._entries, self._ambiguous, files, self._icon_paths = snapshot[:4]
+        self._bundle_roots = snapshot[4] if len(snapshot) > 4 else {}
         self._cache.clear()
         self._icons.clear()
         watched = self._watcher.files() + self._watcher.directories()

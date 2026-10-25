@@ -347,6 +347,7 @@ class UIService(ui_pb2_grpc.UIServicer, QtWidgets.QGraphicsObject):
     @QtCore.pyqtSlot(str, str, ui_pb2.PingRequest)
     def _on_update_stats(self, proto, addr, request):
         main_need_refresh, details_need_refresh = self._populate_stats(self._db, proto, addr, request.stats)
+        self._stats_dialog._apps_runtime.observe_statistics(proto + ':' + addr, request.stats)
         is_local_request = self._is_local_request(proto, addr)
         self._stats_dialog.update(is_local_request, request.stats, main_need_refresh or details_need_refresh)
 

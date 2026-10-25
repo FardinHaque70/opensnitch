@@ -8,9 +8,10 @@ from opensnitch.customwidgets.generictableview import GenericTableModel
 APPLICATION_IDENTITY_ROLE = QtCore.Qt.UserRole + 101
 
 
-class IdentityTableModel(GenericTableModel):
-    def __init__(self, table_name, headers, resolver, identity_for_cell, view):
-        super().__init__(table_name, headers)
+class IdentityPresentation:
+    """Presentation roles shared by generic and specialized table models."""
+
+    def configure_identity(self, headers, resolver, identity_for_cell, view):
         self._identity_resolver = resolver
         self._identity_for_cell = identity_for_cell
         self._identity_view = view
@@ -41,6 +42,12 @@ class IdentityTableModel(GenericTableModel):
     def refresh_identities(self):
         if self.items and self.columnCount():
             self.dataChanged.emit(self.index(0, 0), self.index(len(self.items) - 1, self.columnCount() - 1))
+
+
+class IdentityTableModel(IdentityPresentation, GenericTableModel):
+    def __init__(self, table_name, headers, resolver, identity_for_cell, view):
+        super().__init__(table_name, headers)
+        self.configure_identity(headers, resolver, identity_for_cell, view)
 
 
 def draw_application_identity(painter, option, index, foreground=None, background=None, alignment=None):

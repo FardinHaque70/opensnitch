@@ -74,6 +74,41 @@ class TestApplicationIdentity(unittest.TestCase):
         self.assertEqual(identity.executable_path, self.executable)
         self.assertTrue(identity.exact)
 
+    def test_single_exec_launcher_maps_actual_executable_without_running_shell(self):
+        Path(self.executable).chmod(0o755)
+        launcher = Path(self.executable).parent / 'launcher'
+        launcher.write_text('#!/bin/sh\nexec "' + self.executable + '" "$@"\n')
+        self.entry(executable=str(launcher))
+        self.load()
+        self.assertTrue(self.resolver.resolve('unix:/local', self.executable).exact)
+        self.assertEqual(self.resolver.resolve('unix:/local', self.executable).display_name, 'Example')
+        sentinel = Path(self.temp.name) / 'must-not-exist'
+        launcher.write_text('#!/bin/sh\ntouch "' + str(sentinel) + '"\nexec "' + self.executable + '" "$@"\n')
+        self.load()
+        self.assertFalse(self.resolver.resolve('unix:/local', self.executable).exact)
+        self.assertFalse(sentinel.exists())
+
+    def test_self_relative_launcher_target(self):
+        target = Path(self.executable).parent / 'ActualApp'
+        target.write_text(''); target.chmod(0o755)
+        launcher = target.parent / 'launcher'
+        launcher.write_text('#!/bin/sh\nexec "$(dirname "$(readlink -f "$0")")/ActualApp" "$@"\n')
+        self.entry(executable=str(launcher))
+        self.load()
+        self.assertEqual(self.resolver.resolve('unix:/local', str(target)).display_name, 'Example')
+        self.assertTrue(self.resolver.resolve('unix:/local', str(target)).exact)
+
+    def test_companion_artwork_preserves_identity_and_remote_provenance(self):
+        self.resolver._bundle_roots = {'/usr/lib/example': ('Example', 'example-icon', '', '')}
+        identity = self.resolver.resolve('unix:/local', '/usr/lib/example/resources/helper')
+        self.assertEqual(identity.display_name, 'helper')
+        self.assertEqual(identity.icon_reference, 'example-icon')
+        self.assertIn('Example', identity.tooltip)
+        self.assertFalse(identity.exact)
+        for node, path in [('remote', '/usr/lib/example/resources/helper'),
+                           ('unix:/local', '/usr/lib/example-other/helper')]:
+            self.assertFalse(self.resolver.resolve(node, path).icon_reference)
+
     def test_remote_unknown_and_same_basename_do_not_use_local_metadata(self):
         self.entry()
         self.load()
@@ -223,6 +258,56 @@ class TestApplicationIdentity(unittest.TestCase):
         context._db.get_db_file = lambda: 'saved-history.sqlite'
         self.assertFalse(StatsDialog._application_cell_identity(context, index, [self.executable, '5']).exact)
         self.assertIsNone(StatsDialog._application_cell_identity(context, index, [self.executable] * 14))
+
+    def test_activity_process_presentation_uses_each_rows_node_and_keeps_raw_path(self):
+        from opensnitch.dialogs.stats import StatsDialog
+        self.entry(); self.load()
+        context = SimpleNamespace(_application_identity=self.resolver, GENERAL_COL_NUM=14, COL_NODE=1, COL_PROCS=11)
+        view = QtWidgets.QTableView()
+        model = IdentityTableModel('connections', ['Column'] * 14, self.resolver,
+            lambda index, row: StatsDialog._activity_cell_identity(context, index, row), view)
+        local = [''] * 14
+        local[1], local[11] = 'unix:/local', self.executable
+        remote = list(local); remote[1] = 'ipv4:remote'
+        model.items = [local, remote]
+        model.setRowCount(2)
+        view.setModel(model)
+        for row, exact in ((0, True), (1, False)):
+            index = model.index(row, 11)
+            self.assertEqual(index.data(QtCore.Qt.DisplayRole), self.executable)
+            self.assertEqual(index.data(QtCore.Qt.EditRole), self.executable)
+            self.assertEqual(index.data(APPLICATION_IDENTITY_ROLE).exact, exact)
+            self.assertIn(self.executable, index.data(QtCore.Qt.ToolTipRole))
+        view.close(); model.deleteLater()
+
+    def test_socket_identity_is_bound_to_snapshot_and_retains_native_state_roles(self):
+        from opensnitch.customwidgets.netstattablemodel import IdentityNetstatTableModel
+        self.entry(); self.load()
+        source = {'node': 'unix:/local'}
+        view = QtWidgets.QTableView()
+        model = IdentityNetstatTableModel('sockets', ['Column'] * 13, self.resolver, lambda: source['node'], view)
+        view.setModel(model)
+        model.setRowCount(1)
+        row = ['example', self.executable, '1', '5000', '127.0.0.1', '203.0.113.8', '443', '6', '1000', '42', '2', 'lo', 'inode: 1']
+        class Query:
+            position = -1
+            def next(inner):
+                inner.position += 1
+            def at(inner):
+                return inner.position
+            def value(inner, column):
+                return row[column]
+        model.fillVisibleRows(Query(), 1)
+        self.assertTrue(model.index(0, 1).data(APPLICATION_IDENTITY_ROLE).exact)
+        source['node'] = 'ipv4:remote'
+        self.assertTrue(model.index(0, 1).data(APPLICATION_IDENTITY_ROLE).exact)
+        model.fillVisibleRows(Query(), 1)
+        self.assertFalse(model.index(0, 1).data(APPLICATION_IDENTITY_ROLE).exact)
+        self.assertEqual(model.index(0, 1).data(QtCore.Qt.DisplayRole), self.executable)
+        self.assertEqual(model.index(0, 2).data(), 'Established')
+        self.assertEqual(model.index(0, 7).data(), 'TCP')
+        self.assertEqual(model.index(0, 10).data(), 'AF_INET')
+        view.close(); model.deleteLater()
 
 
 if __name__ == '__main__':
