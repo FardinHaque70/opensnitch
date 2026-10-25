@@ -372,6 +372,12 @@ class Icons():
     """
 
     defaults = {
+        'computer': "SP_ComputerIcon",
+        'network-server': "SP_ComputerIcon",
+        'network-address': "SP_DriveNetIcon",
+        'network-port': "SP_DriveNetIcon",
+        'system-users': "SP_DirHomeIcon",
+        'network-wired': "SP_DriveNetIcon",
         'document-new': "SP_FileIcon",
         'document-save': "SP_DialogSaveButton",
         'document-open': "SP_DirOpenIcon",

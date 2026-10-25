@@ -1,0 +1,6 @@
+<!-- Original OpenSnitch artwork, licensed under GPL-3.0-or-later. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <g fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 8h32v24H30v8H18v-8H8zM15 9v9M21 9v9M27 9v9M33 9v9M19 26h10"/>
+  </g>
+</svg>

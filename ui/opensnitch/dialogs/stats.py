@@ -911,6 +911,15 @@ class StatsDialog(QtWidgets.QDialog, uic.loadUiType(DIALOG_UI_PATH)[0]):
         self.tabWidget.setTabIcon(self.TAB_MAIN, eventsIcon)
         self.tabWidget.setTabIcon(self.TAB_RULES, rulesIcon)
         self.tabWidget.setTabIcon(self.TAB_PROCS, procsIcon)
+        for tab, name in (
+            (self.TAB_NODES, "computer"),
+            (self.TAB_HOSTS, "network-server"),
+            (self.TAB_ADDRS, "network-address"),
+            (self.TAB_PORTS, "network-port"),
+            (self.TAB_USERS, "system-users"),
+            (self.TAB_NETSTAT, "network-wired"),
+        ):
+            self.tabWidget.setTabIcon(tab, Icons.new(self, name))
         self.newRuleButton.setIcon(newRuleIcon)
         self.delRuleButton.setIcon(delRuleIcon)
         self.editRuleButton.setIcon(editRuleIcon)
