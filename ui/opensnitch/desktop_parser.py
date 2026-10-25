@@ -5,6 +5,9 @@ import glob
 import os
 import re
 import locale
+import shlex
+import shutil
+from pathlib import Path
 
 is_pyinotify_available = True
 try:
@@ -13,19 +16,28 @@ except Exception as e:
     is_pyinotify_available = False
     print("Error importing pyinotify:", e)
 
-DESKTOP_PATHS = tuple([
-    os.path.join(d, 'applications')
-    for d in os.getenv('XDG_DATA_DIRS', '/usr/share/').split(':')
-])
+def desktop_paths():
+    roots = [os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share')]
+    roots.extend((os.environ.get('XDG_DATA_DIRS') or '/usr/local/share:/usr/share').split(':'))
+    return tuple(dict.fromkeys(os.path.join(root, 'applications')
+                               for root in roots if os.path.isabs(root)))
+
+
+DESKTOP_PATHS = desktop_paths()
+
 
 class LinuxDesktopParser(threading.Thread):
-    def __init__(self):
+    def __init__(self, paths=None, locale_name=None, watch=True):
         threading.Thread.__init__(self)
         self.lock = Lock()
         self.daemon = True
         self.running = False
         self.apps = {}
         self.apps_by_name = {}
+        self.paths = tuple(paths) if paths is not None else desktop_paths()
+        self._locale_name = locale_name
+        self.files = []
+        self.ambiguous = set()
         self.get_locale()
         # some things are just weird
         # (not really, i don't want to keep track of parent pids
@@ -41,18 +53,43 @@ class LinuxDesktopParser(threading.Thread):
             "res/terminal.svg"
         )
 
-        for desktop_path in DESKTOP_PATHS:
-            if not os.path.exists(desktop_path):
-                continue
-            for desktop_file in glob.glob(os.path.join(desktop_path, '*.desktop')):
-                self._parse_desktop_file(desktop_file)
-
-        if is_pyinotify_available:
+        self.rebuild()
+        if watch and is_pyinotify_available:
             self.start()
+
+    def rebuild(self):
+        apps = {}
+        by_name = {}
+        seen = set()
+        ambiguous = set()
+        files = []
+        for directory in self.paths:
+            for path in sorted(Path(directory).rglob('*.desktop')):
+                desktop_id = str(path.relative_to(directory)).replace(os.sep, '-')
+                files.append(str(path))
+                if desktop_id in seen:
+                    continue
+                seen.add(desktop_id)
+                entry = self._read_desktop_file(str(path))
+                if entry is None:
+                    continue
+                command, info = entry
+                for key in dict.fromkeys((command, os.path.realpath(command))):
+                    if key in apps and apps[key][:2] != info[:2]:
+                        ambiguous.add(key)
+                    else:
+                        apps[key] = info
+                by_name.setdefault(os.path.basename(command), []).append(info)
+        with self.lock:
+            self.apps = apps
+            self.ambiguous = ambiguous
+            self.apps_by_name = {key: values[0] for key, values in by_name.items()
+                                 if len(values) == 1}
+            self.files = files
 
     def get_locale(self):
         try:
-            self.locale = locale.getlocale()[0]
+            self.locale = self._locale_name if self._locale_name is not None else locale.getlocale()[0]
             self.locale_country = self.locale.split("_")[0]
         except Exception:
             self.locale = ""
@@ -60,44 +97,38 @@ class LinuxDesktopParser(threading.Thread):
 
     def _parse_exec(self, cmd):
         try:
-            is_flatpak = re.search(r'^/usr/[s]*bin/flatpak.*--command=([a-zA-Z0-9-_\/\.\+]+)', cmd)
-            if is_flatpak:
-                return is_flatpak.group(1)
+            args = shlex.split(cmd)
+            if not args:
+                return ''
+            if os.path.basename(args[0]) == 'env':
+                args = args[1:]
+                while args and ('=' in args[0] or args[0] == '--'):
+                    args.pop(0)
+                if not args or args[0].startswith('-'):
+                    return ''
+            executable = args[0].replace('%%', '%')
+            # A shared launcher does not uniquely identify its child application.
+            name = os.path.basename(executable)
+            if name in ('flatpak', 'sh', 'bash', 'dash', 'java', 'node', 'perl', 'ruby', 'mono') or name.startswith('python'):
+                return ''
+            if '%' in executable:
+                return ''
+            if not os.path.isabs(executable):
+                executable = shutil.which(executable) or ''
+            return os.path.normpath(executable) if executable else ''
+        except ValueError:
+            return ''
 
-            # remove stuff like %U
-            cmd = re.sub( r'%[a-zA-Z]+', '', cmd)
-            # remove 'env .... command'
-            cmd = re.sub( r'^env\s+[^\s]+\s', '', cmd)
-            # split && trim
-            cmd = cmd.split(' ')[0].strip()
-            # remove quotes
-            cmd = re.sub( r'["\']+', '', cmd)
-
-            # check if we need to resolve the path
-            if len(cmd) > 0 and cmd[0] != '/':
-                for path in os.environ["PATH"].split(os.pathsep):
-                    filename = os.path.join(path, cmd)
-                    if os.path.exists(filename):
-                        cmd = filename
-                        break
-
-        except Exception as e:
-            print("desktop_parser._parse_exec() exception:", e)
-
-        return cmd
+    def _localized(self, parser, field):
+        for key in (field + '[' + self.locale + ']',
+                    field + '[' + self.locale_country + ']', field):
+            value = parser.get('Desktop Entry', key, raw=True, fallback=None)
+            if value:
+                return value
+        return None
 
     def get_app_description(self, parser):
-        try:
-            desc = parser.get('Desktop Entry', 'Comment[%s]' % self.locale_country, raw=True, fallback=None)
-            if desc == None:
-                desc = parser.get('Desktop Entry', 'Comment[%s]' % self.locale, raw=True, fallback=None)
-
-            if desc == None:
-                desc = parser.get('Desktop Entry', 'Comment', raw=True, fallback=None)
-
-            return desc
-        except:
-            return None
+        return self._localized(parser, 'Comment')
 
     @staticmethod
     def discover_app_icon(app_name):
@@ -111,72 +142,40 @@ class LinuxDesktopParser(threading.Thread):
 
         return None
 
-    def _parse_desktop_file(self, desktop_path):
-        parser = configparser.ConfigParser(strict=False)  # Allow duplicate config entries
+    def _read_desktop_file(self, desktop_path):
+        parser = configparser.ConfigParser(strict=False, interpolation=None)
+        parser.optionxform = str
         try:
-            basename = os.path.basename(desktop_path)[:-8]
-            parser.read(desktop_path, 'utf8')
-
-            cmdline = parser.get('Desktop Entry', 'exec', raw=True, fallback=None)
-            if cmdline == None:
-                cmdline = parser.get('Desktop Entry', 'Exec', raw=True, fallback=None)
-            if cmdline is None:
-                return
-
-            cmd  = self._parse_exec(cmdline)
+            parser.read(desktop_path, encoding='utf8')
+            if parser.getboolean('Desktop Entry', 'Hidden', fallback=False):
+                return None
+            if parser.get('Desktop Entry', 'Type', fallback='Application') != 'Application':
+                return None
+            command = self._parse_exec(parser.get('Desktop Entry', 'Exec', raw=True, fallback=''))
+            name = self._localized(parser, 'Name')
+            if not command or not name:
+                return None
             icon = parser.get('Desktop Entry', 'Icon', raw=True, fallback=None)
-            name = parser.get('Desktop Entry', 'Name', raw=True, fallback=None)
-            desc = self.get_app_description(parser)
+            return command, (name, icon, self.get_app_description(parser), desktop_path)
+        except (OSError, UnicodeError, configparser.Error, ValueError):
+            return None
 
-            if name == "flatpak":
-                return
-
-            if icon == None:
-                # Some .desktop files doesn't have the Icon entry
-                # FIXME: even if we return an icon, if the DE is not properly configured,
-                # it won't be loaded/displayed.
-                icon = LinuxDesktopParser.discover_app_icon(basename)
-                if icon == None:
-                    icon = self.terminal_icon
-
-            with self.lock:
-                # The Exec entry may have an absolute path to a binary or just the binary with parameters.
-                # /path/binary or binary, so save both
-                self.apps[cmd] = (name, icon, desc, desktop_path)
-                self.apps[basename] = (name, icon, desc, desktop_path)
-                # if the command is a symlink, add the real binary too
-                if os.path.islink(cmd):
-                    link_to = os.path.realpath(cmd)
-                    self.apps[link_to] = (name, icon, desc, desktop_path)
-        except:
-            print("Exception parsing .desktop file ", desktop_path)
+    def _parse_desktop_file(self, desktop_path):
+        # Compatibility for callers monitoring a changed desktop entry.
+        self.rebuild()
 
     def get_info_by_path(self, path, default_icon):
-        def_name = os.path.basename(path)
-        # apply fixes
-        for orig, to in self.fixes.items():
-            if path == orig:
-                path = to
-                break
-
-        app_name = self.apps.get(path)
-        if app_name != None:
-            return self.apps.get(path, (def_name, default_icon, "", None))
-
-        app_name = self.apps.get(def_name)
-        if app_name != None:
-            return self.apps.get(def_name, (def_name, default_icon, "", None))
-
-        # last try to get a default terminal icon
-        icon = self.discover_app_icon(def_name)
-        if icon == None:
-            icon = self.terminal_icon
-
-        return self.apps.get(def_name, (def_name, icon, "", None))
+        fallback = (os.path.basename(path), default_icon, '', None)
+        path = self.fixes.get(path, path)
+        with self.lock:
+            if path not in self.ambiguous and path in self.apps:
+                info = self.apps[path]
+                return info[0], info[1] or default_icon, info[2], info[3]
+        return fallback
 
     def get_info_by_binname(self, name, default_icon):
-        def_name = os.path.basename(name)
-        return self.apps.get(def_name, (def_name, default_icon, None))
+        info = self.apps_by_name.get(os.path.basename(name))
+        return info or (os.path.basename(name), default_icon, '', None)
 
     def run(self):
         self.running = True
@@ -184,19 +183,11 @@ class LinuxDesktopParser(threading.Thread):
         notifier = pyinotify.Notifier(wm)
 
         def inotify_callback(event):
-            if event.mask == pyinotify.IN_CLOSE_WRITE:
-                self._parse_desktop_file(event.pathname)
+            self.rebuild()
 
-            elif event.mask == pyinotify.IN_DELETE:
-                with self.lock:
-                    for cmd, data in self.apps.items():
-                        if data[2] == event.pathname:
-                            del self.apps[cmd]
-                            break
-
-        for p in DESKTOP_PATHS:
+        for p in self.paths:
             if os.path.exists(p):
                 wm.add_watch(p,
-                             pyinotify.IN_CLOSE_WRITE | pyinotify.IN_DELETE,
+                             pyinotify.IN_CLOSE_WRITE | pyinotify.IN_DELETE | pyinotify.IN_CREATE | pyinotify.IN_MOVED_TO | pyinotify.IN_MOVED_FROM,
                              inotify_callback)
         notifier.loop()

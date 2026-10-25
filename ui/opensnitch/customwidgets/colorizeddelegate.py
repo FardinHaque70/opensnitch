@@ -1,5 +1,6 @@
 from PyQt5 import Qt, QtCore
 from PyQt5.QtWidgets import QApplication
+from opensnitch.customwidgets.applicationidentity import draw_application_identity
 
 # PyQt5 >= v5.15.8 (28/01/2023) (#821)
 if hasattr(Qt, 'QItemDelegate'):
@@ -28,6 +29,8 @@ class ColorizedDelegate(QItemDelegate):
         """Override default widget style to personalize it with our own.
         """
         if self._actions.get('actions') == None:
+            if draw_application_identity(painter, option, index):
+                return
             return super().paint(painter, option, index)
         if not index.isValid():
             return super().paint(painter, option, index)
@@ -92,4 +95,5 @@ class ColorizedDelegate(QItemDelegate):
                 nocolor=False
 
         if nocolor:
-            super().paint(painter, option, index)
+            if not draw_application_identity(painter, option, index):
+                super().paint(painter, option, index)

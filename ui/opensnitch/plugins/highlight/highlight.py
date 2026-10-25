@@ -2,6 +2,7 @@ from PyQt5 import Qt, QtCore
 from PyQt5.QtGui import QColor, QPalette
 
 from opensnitch.plugins import PluginBase, PluginSignal
+from opensnitch.customwidgets.applicationidentity import draw_application_identity
 
 # PyQt5 >= v5.15.8 (#821)
 if hasattr(Qt, 'QStyle'):
@@ -307,6 +308,8 @@ class Highlight(PluginBase):
                   cellColor,
                   cellBgColor,
                   cellValue):
+        if draw_application_identity(painter, option, index, cellColor, cellBgColor, cellAlignment):
+            return
         cellSelected = option.state & QStyle.State_Selected
 
         painter.save()

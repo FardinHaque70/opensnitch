@@ -24,6 +24,8 @@ from opensnitch.customwidgets.firewalltableview import FirewallTableModel
 from opensnitch.customwidgets.generictableview import GenericTableModel
 from opensnitch.customwidgets.addresstablemodel import AddressTableModel
 from opensnitch.customwidgets.netstattablemodel import NetstatTableModel
+from opensnitch.customwidgets.applicationidentity import IdentityTableModel, ApplicationIdentityDelegate
+from opensnitch.application_identity import ApplicationIdentityService
 from opensnitch.utils import Message, QuickHelp, AsnDB, Icons
 from opensnitch.utils.infowindow import InfoWindow
 from opensnitch.utils.xdg import xdg_current_desktop
@@ -460,6 +462,9 @@ class StatsDialog(QtWidgets.QDialog, uic.loadUiType(DIALOG_UI_PATH)[0]):
 
         self._lock = threading.RLock()
         self._address = address
+        self._application_identity = ApplicationIdentityService.instance()
+        self._application_source_nodes = set()
+        self._refresh_application_sources()
         self._stats = None
         self._notifications_sent = {}
 
@@ -607,7 +612,7 @@ class StatsDialog(QtWidgets.QDialog, uic.loadUiType(DIALOG_UI_PATH)[0]):
         ]
 
         self.TABLES[self.TAB_HOSTS]['header_labels'] = stats_headers
-        self.TABLES[self.TAB_PROCS]['header_labels'] = stats_headers
+        self.TABLES[self.TAB_PROCS]['header_labels'] = [QC.translate("stats", "Application"), stats_headers[1]]
         self.TABLES[self.TAB_ADDRS]['header_labels'] = stats_headers
         self.TABLES[self.TAB_PORTS]['header_labels'] = stats_headers
         self.TABLES[self.TAB_USERS]['header_labels'] = stats_headers
@@ -694,13 +699,16 @@ class StatsDialog(QtWidgets.QDialog, uic.loadUiType(DIALOG_UI_PATH)[0]):
                 )
         self.TABLES[self.TAB_PROCS]['view'] = self._setup_table(QtWidgets.QTableView,
                 self.procsTable, "procs",
-                model=GenericTableModel("procs", self.TABLES[self.TAB_PROCS]['header_labels']),
+                model=IdentityTableModel("procs", self.TABLES[self.TAB_PROCS]['header_labels'],
+                                         self._application_identity, self._application_cell_identity, self.procsTable),
                 verticalScrollBar=self.procsScrollBar,
                 resize_cols=(self.COL_WHAT,),
                 delegate=self.TABLES[self.TAB_PROCS]['delegate'],
                 order_by="2",
                 limit=self._get_limit()
                 )
+        if not isinstance(self.procsTable.itemDelegate(), ColorizedDelegate):
+            self.procsTable.setItemDelegate(ApplicationIdentityDelegate(self.procsTable))
         self.TABLES[self.TAB_ADDRS]['view'] = self._setup_table(QtWidgets.QTableView,
                 self.addrTable, "addrs",
                 model=AddressTableModel("addrs", self.TABLES[self.TAB_ADDRS]['header_labels']),
@@ -1656,7 +1664,33 @@ class StatsDialog(QtWidgets.QDialog, uic.loadUiType(DIALOG_UI_PATH)[0]):
     def _cb_app_rules_updated(self, what):
         self._refresh_active_table()
 
+    def _refresh_application_sources(self):
+        nodes = list(self._nodes.get_nodes())
+        self._application_source_nodes.update(nodes)
+        if self._address is not None:
+            self._application_source_nodes.add(self._address)
+            if self._address not in nodes:
+                nodes.append(self._address)
+        for node in nodes:
+            self._application_identity.register_node(node, self._nodes.is_local(node))
+        model = self.procsTable.model()
+        if isinstance(model, IdentityTableModel):
+            model.refresh_identities()
+
+    def _application_cell_identity(self, index, row):
+        # Detail queries have different columns and will be integrated separately.
+        if len(row) != 2 or index.column() != 0:
+            return None
+        node = self._address
+        if node is None and self._db.get_db_file() == self._db.DB_IN_MEMORY:
+            sources = self._application_source_nodes
+            if sources and all(self._application_identity.is_local_node(source) for source in sources):
+                node = sorted(sources)[0]
+        return self._application_identity.resolve(node, row[0])
+
     def _cb_nodes_updated(self, count):
+        if hasattr(self, '_application_identity'):
+            self._refresh_application_sources()
         prevNode = self.comboNetstatNodes.currentIndex()
         self.comboNetstatNodes.blockSignals(True);
         self.comboNetstatNodes.clear()
