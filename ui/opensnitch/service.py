@@ -199,6 +199,8 @@ class UIService(ui_pb2_grpc.UIServicer, QtWidgets.QGraphicsObject):
         self.off_icon = QtGui.QIcon()
         self.off_icon.addPixmap(self.off_image, QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.white_image = QtGui.QPixmap(os.path.join(self._path, "res/icon-white.svg"))
+        if self.white_image.isNull():
+            self.white_image = QtGui.QPixmap(os.path.join(self._path, "res/icon-white.png"))
         self.white_icon = QtGui.QIcon()
         self.white_icon.addPixmap(self.white_image, QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.red_image = QtGui.QPixmap(os.path.join(self._path, "res/icon-red.png"))
