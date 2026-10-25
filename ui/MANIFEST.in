@@ -4,3 +4,4 @@ recursive-include opensnitch/i18n *.qm
 recursive-include opensnitch/themes *
 recursive-include opensnitch/database/migrations *.sql
 include LICENSE
+include tools/generate_fallback_icons.py

@@ -379,6 +379,8 @@ class Icons():
         'preferences-system': "SP_FileDialogListView",
         'preferences-desktop': "SP_FileDialogListView",
         'security-high': "SP_VistaShield",
+        'security-medium': "SP_VistaShield",
+        'security-low': "SP_VistaShield",
         'go-previous': "SP_ArrowLeft",
         'go-jump': "SP_CommandLink",
         'go-down': "SP_TitleBarUnshadeButton",
@@ -387,19 +389,18 @@ class Icons():
         'emblem-important': "SP_DialogCancelButton",
         'emblem-default': "SP_DialogApplyButton",
         'window-close': "SP_DialogCloseButton",
-        'system-run': "",
-        'preferences-system-network': "",
-        'document-properties': "",
+        'system-run': "SP_ComputerIcon",
+        'preferences-system-network': "SP_DriveNetIcon",
+        'document-properties': "SP_FileDialogInfoView",
         'edit-delete': "SP_DialogCancelButton",
         'list-add': "SP_ArrowUp",
         'list-remove': "SP_ArrowDown",
         'system-search': "SP_FileDialogContentsView",
         'application-exit': "SP_TitleBarCloseButton",
         'view-sort-ascending': "SP_ToolBarVerticalExtensionButton",
-        'address-book-new': "",
+        'address-book-new': "SP_FileDialogDetailedView",
         'media-playback-start': "SP_MediaPlay",
         'media-playback-pause': "SP_MediaPause",
-        'system-search': "SP_FileDialogContentsView",
         'accessories-text-editor': "SP_DialogOpenButton",
         'edit-clear-all': "SP_DialogResetButton",
         'reload': "SP_DialogResetButton",
@@ -407,33 +408,52 @@ class Icons():
         'dialog-warning': "SP_MessageBoxWarning"
     }
 
+    # Reuse the artwork already shipped with the application for related names.
+    fallback_aliases = {
+        'address-book-new': 'emblem-documents',
+        'preferences-system-network': 'network-workgroup',
+        'security-medium': 'security-high',
+        'security-low': 'security-high',
+    }
+
+    @staticmethod
+    def _is_renderable(icon):
+        # An icon can be non-null even when its image plugin is unavailable.
+        pixmap = icon.pixmap(24, 24)
+        if pixmap.isNull():
+            return False
+        image = pixmap.toImage()
+        return any(image.pixelColor(x, y).alpha()
+                   for y in range(image.height()) for x in range(image.width()))
+
+    @staticmethod
+    def _bundled(widget, icon_name):
+        dark = widget.palette().color(QtGui.QPalette.Window).lightness() < 128
+        variant = 'dark' if Themes.IS_DARK or dark else 'light'
+        name = Icons.fallback_aliases.get(icon_name, icon_name)
+        return QtGui.QIcon(os.path.join(
+            os.path.dirname(__file__), '../res/icons/fallback', variant, name + '.png'))
+
     @staticmethod
     def new(widget, icon_name):
-        if Themes.IS_DARK:
-            icon_pix = os.path.join(
-                os.path.abspath(os.path.dirname(__file__)),
-                "../res/themes/dark/icons/",
-                icon_name + ".svg")
-            if os.path.exists(icon_pix):
-                icon_image = QtGui.QPixmap(icon_pix)
-                icon = QtGui.QIcon()
-                icon.addPixmap(icon_image, QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        """Prefer working desktop icons, then self-contained PNG fallbacks."""
+        for name in (icon_name, icon_name + '-symbolic'):
+            icon = QtGui.QIcon.fromTheme(name)
+            if Icons._is_renderable(icon):
                 return icon
 
-        icon = QtGui.QIcon.fromTheme(icon_name, QtGui.QIcon.fromTheme(icon_name + "-symbolic"))
-        if icon.isNull():
-            try:
-                icon = widget.style().standardIcon(getattr(QtWidgets.QStyle, Icons.defaults[icon_name]))
-                # in some DEs, like Enlightenment, some builtins icons may be
-                # empty. The icon is not Null, but there're no available sizes,
-                # and the pixmap is empty.
-                # TODO: Create a default icon, and distribute it as resource.
-                if len(icon.availableSizes()) == 0:
-                    icon = widget.style().standardIcon(getattr(QtWidgets.QStyle, 'SP_FileIcon'))
-            except Exception as e:
-                print("Qt standardIcon exception:", icon_name, ",", e)
+        icon = Icons._bundled(widget, icon_name)
+        if Icons._is_renderable(icon):
+            return icon
 
-        return icon
+        standard_name = Icons.defaults.get(icon_name, 'SP_FileIcon')
+        standard = getattr(QtWidgets.QStyle, standard_name, QtWidgets.QStyle.SP_FileIcon)
+        icon = widget.style().standardIcon(standard)
+        if Icons._is_renderable(icon):
+            return icon
+
+        # Also covers unknown plugin icon names and styles with empty icons.
+        return Icons._bundled(widget, 'document-properties')
 
     @staticmethod
     def get_by_appname(app_icon):
