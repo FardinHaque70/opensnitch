@@ -138,6 +138,10 @@ class AppsWindow(Adw.ApplicationWindow):
         self.refresh_button = Gtk.Button(child=refresh_content, action_name='app.refresh')
         self.refresh_button.set_tooltip_text('Reload applications and current rules')
         actions.append(self.refresh_button)
+        if self.live:
+            cleanup = Gtk.Button(label='Clean up…', action_name='app.cleanup-stale')
+            cleanup.set_tooltip_text('Review unavailable temporary entries and matching rules')
+            actions.append(cleanup)
         themes = Gtk.Box(spacing=0, hexpand=True, halign=Gtk.Align.END)
         themes.add_css_class('linked')
         self.theme_buttons = {}
@@ -202,6 +206,8 @@ class AppsWindow(Adw.ApplicationWindow):
         self.details_view = Adw.ToolbarView()
         detail_header = details_header('Application details')
         menu = Gio.Menu()
+        if self.live:
+            menu.append('Clean up unavailable temporary apps…', 'app.cleanup-stale')
         menu.append('Quit OpenSnitch', 'app.quit')
         if getattr(app, 'supervised', False):
             menu.append('Return to Qt interface', 'app.rollback')
@@ -459,6 +465,7 @@ class GtkApplication(Adw.Application):
         self.ready_file = ready_file
         self.supervised = bool(ready_file)
         self.window = None
+        self.cleanup_window = None
 
     def do_startup(self):
         Adw.Application.do_startup(self)
@@ -489,6 +496,9 @@ class GtkApplication(Adw.Application):
         refresh = Gio.SimpleAction.new('refresh', None)
         refresh.connect('activate', self.refresh_current)
         self.add_action(refresh)
+        cleanup = Gio.SimpleAction.new('cleanup-stale', None)
+        cleanup.connect('activate', self.show_cleanup)
+        self.add_action(cleanup)
 
     def do_activate(self):
         if self.window is None:
@@ -545,6 +555,14 @@ class GtkApplication(Adw.Application):
     def tray_activation_token(self, token):
         if token and self.window:
             self.window.set_startup_id(token)
+
+    def show_cleanup(self, *args):
+        if not self.live_socket or not hasattr(self, 'backend'):
+            return
+        from .cleanup import CleanupWindow
+        if self.cleanup_window is None or self.cleanup_window.closed:
+            self.cleanup_window = CleanupWindow(self)
+        self.cleanup_window.present()
 
     def present_main(self):
         self._start_hidden = False

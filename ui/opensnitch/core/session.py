@@ -49,6 +49,7 @@ class ApplicationSession:
         self._logged_policies = {}
         self.error = ''
         self.transport = self.history = self._lease = self.sockets = self.activity = None
+        self.cleanup_job = None
         self.application_snapshots = {}
         self.snapshot = BackendSnapshot((), message='Waiting for the daemon…')
         self.controller = AccessControllerCore(self.catalog, self.policies, self._send,
@@ -203,6 +204,14 @@ class ApplicationSession:
             return 'The current rules could not be verified. Refresh policies.'
         return ''
 
+    def start_cleanup(self, plan, changed):
+        from .cleanup import CleanupJob
+        if self.cleanup_job and not self.cleanup_job.finished:
+            return None
+        self.cleanup_job = CleanupJob(self, plan, changed)
+        self.cleanup_job.start()
+        return self.cleanup_job
+
     def request_policy(self, key, action, duration='always'):
         if key not in self.catalog.entries:
             return False
@@ -260,6 +269,8 @@ class ApplicationSession:
         if self._closed:
             return
         self.controller.check_timeouts()
+        if self.cleanup_job:
+            self.cleanup_job.tick()
         if self.sockets:
             self.sockets.tick()
         changed = False

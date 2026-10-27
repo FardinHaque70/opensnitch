@@ -85,6 +85,53 @@ class TestLiveSession(unittest.TestCase):
         self.pump(lambda: not self.model.controller.pending)
         return notification
 
+    def test_cleanup_waits_for_ack_and_subscription_before_hiding(self):
+        from copy import deepcopy
+        from opensnitch.core.cleanup import build_plan
+        self.binary.unlink()
+        plan = build_plan(deepcopy(tuple(self.model.catalog.entries.values())), (self.rule,), ())
+        job = self.model.start_cleanup(plan, lambda: None)
+        self.assertFalse(self.model.catalog.entries[self.key].hidden)
+        self.assertTrue(job.pending)
+        message = self.apply()
+        self.assertEqual(message.type, pb.DELETE_RULE)
+        self.assertEqual(job.index, 1)
+        self.assertFalse(job.finished)
+        self.assertFalse(self.model.catalog.entries[self.key].hidden)
+        self.connect(rules=[])
+        self.model.tick()
+        self.assertTrue(job.finished)
+        self.assertFalse(job.error)
+        self.assertEqual(job.removed, 1)
+        self.assertTrue(self.model.catalog.entries[self.key].hidden)
+        self.assertTrue(job.backup.is_file())
+        self.model.catalog.observe_many(self.key[0], [self.key[1]], 'observed')
+        self.assertTrue(self.model.catalog.entries[self.key].hidden)
+        self.assertNotIn(self.key, [row.key for row in self.model.snapshot.applications])
+
+    def test_cleanup_rejection_retains_entries_and_backup(self):
+        from copy import deepcopy
+        from opensnitch.core.cleanup import build_plan
+        self.binary.unlink()
+        plan = build_plan(deepcopy(tuple(self.model.catalog.entries.values())), (self.rule,), ())
+        job = self.model.start_cleanup(plan, lambda: None)
+        self.apply(success=False)
+        self.assertTrue(job.finished)
+        self.assertIn('rejection', job.error.lower())
+        self.assertFalse(self.model.catalog.entries[self.key].hidden)
+        self.assertTrue(job.backup.is_file())
+
+    def test_cleanup_refuses_file_that_reappeared_after_review(self):
+        from copy import deepcopy
+        from opensnitch.core.cleanup import build_plan
+        self.binary.unlink()
+        plan = build_plan(deepcopy(tuple(self.model.catalog.entries.values())), (self.rule,), ())
+        self.binary.write_text('alive again')
+        job = self.model.start_cleanup(plan, lambda: None)
+        self.assertTrue(job.finished)
+        self.assertIn('available again', job.error)
+        self.assertFalse(self.model.controller.pending)
+
     def test_disabled_temporary_rule_is_not_treated_as_active_expiry(self):
         self.model.policies.replace_rules(self.key[0], [replace(self.rule, enabled=False, duration='1h', created=0)])
         self.model.tick()
