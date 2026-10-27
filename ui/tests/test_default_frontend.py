@@ -36,6 +36,8 @@ class DefaultFrontendTests(unittest.TestCase):
         self.assertIn("'--default'", (self.binary / 'opensnitch-gtk').read_text())
         app = self.data / 'applications/io.github.opensnitch.GtkInventory.desktop'
         self.assertIn('Exec="' + command + '"', app.read_text())
+        self.assertIn('NoDisplay=true', app.read_text())
+        self.assertNotIn('NoDisplay=true', menu.read_text())
         self.assertTrue(state['enabled'])
 
     def test_repeated_install_keeps_original_backup_and_restore_is_exact(self):

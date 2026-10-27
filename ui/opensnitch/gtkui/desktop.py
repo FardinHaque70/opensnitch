@@ -36,7 +36,8 @@ def register_application(data_home=None, launcher=None):
             'Comment=GTK development frontend with automatic Qt rollback\n'
             'Exec=' + command + '\n'
             'Icon=' + str(icon) + '\nTerminal=false\nCategories=System;Security;Network;\n'
-            'StartupWMClass=' + APPLICATION_ID + '\n')
+            'StartupWMClass=' + APPLICATION_ID + '\n'
+            + ('NoDisplay=true\n' if launcher else ''))
     for path, contents in ((icon, artwork), (desktop, text.encode('utf-8'))):
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists() or path.read_bytes() != contents:

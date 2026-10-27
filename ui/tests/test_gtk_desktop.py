@@ -19,6 +19,15 @@ class DesktopTests(unittest.TestCase):
             register_application(directory)
             self.assertEqual(desktop.stat().st_mtime_ns, timestamp)
 
+    def test_account_default_hides_duplicate_but_retains_desktop_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop, icon = register_application(directory, launcher=Path(directory) / 'opensnitch-gtk')
+            text = desktop.read_text()
+            self.assertIn('NoDisplay=true', text)
+            self.assertNotIn('Hidden=true', text)
+            self.assertIn('StartupWMClass=' + APPLICATION_ID, text)
+            self.assertTrue(icon.is_file())
+
     def test_exec_paths_are_desktop_quoted(self):
         self.assertEqual(exec_argument('/a path/100%/app'), '"/a path/100%%/app"')
         self.assertIn('\\$', exec_argument('/path/$name'))
