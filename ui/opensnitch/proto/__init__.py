@@ -18,7 +18,7 @@
 
 from packaging.version import Version
 import importlib
-from opensnitch.utils import Versions
+from google.protobuf import __version__ as protobuf_version
 
 # Protobuffers compiled with protobuf < 3.20.0 are incompatible with
 # protobuf >= 4.0.0
@@ -43,7 +43,7 @@ def import_():
     installed in the system.
     """
     try:
-        gui_version, grpc_version, proto_version = Versions.get()
+        proto_version = protobuf_version
         proto_ver = default_pb
         grpc_ver = default_grpc
 
@@ -54,4 +54,4 @@ def import_():
         return importlib.import_module(proto_ver), importlib.import_module(grpc_ver)
     except Exception as e:
         print("error importing protobuffer: ", repr(e))
-        return importlib.import_module(default_pb, default_grpc)
+        return importlib.import_module(default_pb), importlib.import_module(default_grpc)

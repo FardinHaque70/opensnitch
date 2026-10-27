@@ -33,6 +33,14 @@ class ApplicationRule:
                    operator_dict(rule.operator), rule.created, rule.description, rule.nolog)
 
     @property
+    def policy_fingerprint(self):
+        # The daemon regenerates Created in Deserialize(); it is not evidence
+        # that the configured rule changed outside the frontend.
+        document = dict(self.__dict__)
+        document.pop('created')
+        return hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
+
+    @property
     def fingerprint(self):
         # Include fields whose external modification must prevent overwrites.
         return hashlib.sha256(json.dumps(self.__dict__, sort_keys=True).encode()).hexdigest()
@@ -131,8 +139,22 @@ class ApplicationPolicyService:
             return 'Custom or conflicting rules apply. Use Manage rules to change this application’s access.'
         if owner:
             rule = self.rule_by_name(entry.node_id, owner.get('name'))
-            if rule is None or rule.fingerprint != owner.get('fingerprint'):
+            if rule is None or (rule.policy_fingerprint != owner['policy_fingerprint'] if owner.get('policy_fingerprint') else rule.fingerprint != owner.get('fingerprint')):
                 return 'This rule changed outside Apps. Reconnect to refresh its policy before changing access.'
             if not related or related[0].name != rule.name:
                 return 'Rule ownership does not match this executable. Review its rules.'
         return ''
+
+
+def describe_rule(rule):
+    """Readable conditions; this does not predict a connection's winning rule."""
+    labels = {'dest.port': 'Destination port', 'dest.ip': 'Destination IP', 'dest.host': 'Destination host',
+              'dest.network': 'Destination network', 'user.id': 'User ID', 'protocol': 'Protocol',
+              'process.path': 'Executable', 'process.command': 'Command line', 'process.id': 'Process ID'}
+    def describe(operator):
+        if operator.get('type') == 'list':
+            return ' AND '.join(describe(child) for child in operator.get('list', ()))
+        return labels.get(operator.get('operand'), operator.get('operand', 'Condition')) + (
+            ' matches ' if operator.get('type') == 'regexp' else ': ') + operator.get('data', '')
+    return {'allow': 'Allow', 'deny': 'Block', 'reject': 'Reject'}.get(rule.action, rule.action) + ' · ' + describe(rule.operator) + (
+        ' · Priority rule' if rule.precedence else '')

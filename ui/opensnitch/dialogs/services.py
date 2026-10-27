@@ -5,7 +5,8 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from opensnitch.application_catalog import CatalogEntry
 from opensnitch.config import Config
 from opensnitch.dialogs.applications import ApplicationRuleReview
-from opensnitch.systemd_catalog import SystemdCatalog, shared_services
+from opensnitch.systemd_catalog import SystemdCatalog, ServiceVerificationAdapter, shared_services
+from opensnitch.core.services import ServiceAccessController
 from opensnitch.utils import Icons
 
 
@@ -20,7 +21,8 @@ class ServicesView(QtWidgets.QWidget):
         self.runtime.attach_service_catalog(self.provider)
         self._items = {}
         self._selection = None
-        self._verification = None
+        self.service_controls = ServiceAccessController(ServiceVerificationAdapter(self.provider, self),
+            self.runtime.controller.request, self.rebuild, self.show_feedback)
         self._review = None
         self._sharing_display = None
         self._rebuilding = False
@@ -210,7 +212,7 @@ class ServicesView(QtWidgets.QWidget):
                     access = self.tr('Policy unavailable')
                 elif (self.node(), record.executable_path) in self.runtime.controller.pending:
                     access = self.tr('Applying…')
-                elif self._verification and self._verification['path'] == record.executable_path:
+                elif self.service_controls.pending and self.provider.records.get(self.service_controls.pending) and self.provider.records[self.service_controls.pending].executable_path == record.executable_path:
                     access = self.tr('Verifying executable…')
                 elif not self.runtime.online(self.node()):
                     access = self.tr('Node disconnected')
@@ -285,7 +287,7 @@ class ServicesView(QtWidgets.QWidget):
             reason = self.runtime.controller.reason(entry)
         if self.node() in self.runtime.errors:
             reason = self.runtime.errors[self.node()]
-        if self._verification:
+        if self.service_controls.pending:
             reason = self.tr('Verifying the service executable and shared services…')
         enabled = bool(record.executable_path and entry and not reason)
         for button in (self.allow, self.block, self.defaults):
@@ -299,22 +301,10 @@ class ServicesView(QtWidgets.QWidget):
 
     def provider_changed(self):
         self.rebuild()
-        pending = self._verification
-        if not pending or self.provider.generation < pending['generation']:
-            return
-        self._verification = None
-        current = self.provider.records.get(pending['key'])
-        if (current is None or current.executable_path != pending['path'] or current.reason
-                or current.scope in self.provider.errors
-                or shared_services(self.provider.records, pending['path']) != pending['sharing']):
-            self.show_feedback(self.tr('Service associations changed. Review the executable and shared services before trying again.'))
-        else:
-            self.runtime.controller.request((pending['node'], pending['path']), pending['action'], pending['duration'])
-        self.rebuild()
 
     def change_access(self, action):
         record = self.selected_record()
-        if not record or not record.executable_path or record.reason or self._verification or not self.local_node():
+        if not record or not record.executable_path or record.reason or self.service_controls.pending or not self.local_node():
             return
         entry = self.runtime.catalog.entries.get((self.node(), record.executable_path))
         if entry is None:
@@ -323,13 +313,8 @@ class ServicesView(QtWidgets.QWidget):
         if reason:
             self.show_feedback(reason)
             return
-        self._verification = dict(key=record.key, node=self.node(), path=record.executable_path,
-            sharing=shared_services(self.provider.records, record.executable_path),
-            action=action, duration=self.duration.currentData(), generation=self.provider._serial + 1)
-        generation = self.provider.refresh(fresh=True)
-        self._verification['generation'] = generation
         self.show_feedback(self.tr('Verifying executable access…'))
-        self.rebuild()
+        self.service_controls.request(record.key, self.node(), action, self.duration.currentData())
 
     def allow_executable(self):
         self.change_access('allow')

@@ -1,4 +1,5 @@
 from PyQt5.QtSql import QSqlDatabase, QSqlQueryModel, QSqlQuery
+from opensnitch.core.schema import STATEMENTS
 import threading
 import sys
 import os
@@ -116,144 +117,9 @@ class Database:
         else:
             # Set DELETE mode (file)
             self.set_journal_mode(0)
-        q = QSqlQuery("create table if not exists connections (" \
-                "time text, " \
-                "node text, " \
-                "action text, " \
-                "protocol text, " \
-                "src_ip text, " \
-                "src_port text, " \
-                "dst_ip text, " \
-                "dst_host text, " \
-                "dst_port text, " \
-                "uid text, " \
-                "pid text, " \
-                "process text, " \
-                "process_args text, " \
-                "process_cwd text, " \
-                "rule text, " \
-                "UNIQUE(node, action, protocol, src_ip, src_port, dst_ip, dst_port, uid, pid, process, process_args))",
-                self.db)
-        q = QSqlQuery("create index time_index on connections (time)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index action_index on connections (action)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index protocol_index on connections (protocol)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index dst_host_index on connections (dst_host)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index process_index on connections (process)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index dst_ip_index on connections (dst_ip)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index dst_port_index on connections (dst_port)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index rule_index on connections (rule)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index node_index on connections (node)", self.db)
-        q.exec_()
-        q = QSqlQuery("CREATE INDEX details_query_index on connections (process, process_args, uid, pid, dst_ip, dst_host, dst_port, action, node, protocol)", self.db)
-        q.exec_()
-
-        q = QSqlQuery("create table if not exists nodes (" \
-                "addr text primary key," \
-                "hostname text," \
-                "daemon_version text," \
-                "daemon_uptime text," \
-                "daemon_rules text," \
-                "cons text," \
-                "cons_dropped text," \
-                "version text," \
-                "status text, " \
-                "last_connection text)"
-                , self.db)
-        q.exec_()
-
-        q = QSqlQuery("create table if not exists rules (" \
-                "time text, " \
-                "node text, " \
-                "name text, " \
-                "enabled text, " \
-                "precedence text, " \
-                "action text, " \
-                "duration text, " \
-                "operator_type text, " \
-                "operator_sensitive text, " \
-                "operator_operand text, " \
-                "operator_data text, " \
-                "description text, " \
-                "nolog text, " \
-                "created text, " \
-                "UNIQUE(node, name)"
-                ")", self.db)
-        q.exec_()
-
-        q = QSqlQuery("create table if not exists alerts (" \
-                "time text, " \
-                "node text, " \
-                "type text, " \
-                "action text, " \
-                "priority text, " \
-                "what text, " \
-                "body text, " \
-                "status int " \
-                ")", self.db)
-        q.exec_()
-        q = QSqlQuery("create table if not exists sockets (" \
-                      "id int primary key, " \
-                      "last_seen text, " \
-                      "node text, " \
-                      "src_port text, " \
-                      "src_ip text, " \
-                      "dst_ip text, " \
-                      "dst_port text, " \
-                      "proto text, " \
-                      "uid text, " \
-                      "inode text, " \
-                      "iface text, " \
-                      "family text, " \
-                      "state text, " \
-                      "cookies text, " \
-                      "rqueue text, " \
-                      "wqueue text, " \
-                      "expires text, " \
-                      "retrans text, " \
-                      "timer text, " \
-                      "mark text, " \
-                      "proc_pid text, " \
-                      "proc_comm text, " \
-                      "proc_path text, " \
-                      "UNIQUE(node, src_port, src_ip, dst_ip, dst_port, proto, family, inode)" \
-                      ")", self.db)
-        q.exec_()
-        q = QSqlQuery("create index sck_srcport_index on sockets (src_port)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index sck_dstip_index on sockets (dst_ip)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index sck_srcip_index on sockets (src_ip)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index sck_dsthost_index on sockets (dst_host)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index sck_state_index on sockets (state)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index sck_comm_index on sockets (proc_comm)", self.db)
-        q.exec_()
-        q = QSqlQuery("create index sck_path_index on sockets (proc_path)", self.db)
-        q.exec_()
-        q.exec_()
-        q = QSqlQuery("create index rules_index on rules (time)", self.db)
-        q.exec_()
-
-        q = QSqlQuery("create table if not exists hosts (what text primary key, hits integer)", self.db)
-        q.exec_()
-        q = QSqlQuery("create table if not exists procs (what text primary key, hits integer)", self.db)
-        q.exec_()
-        q = QSqlQuery("create table if not exists addrs (what text primary key, hits integer)", self.db)
-        q.exec_()
-        q = QSqlQuery("create table if not exists ports (what text primary key, hits integer)", self.db)
-        q.exec_()
-        q = QSqlQuery("create table if not exists users (what text primary key, hits integer)", self.db)
-        q.exec_()
+        for statement in STATEMENTS:
+            query = QSqlQuery(statement, self.db)
+            query.exec_()
 
     def get_schema_version(self):
         q = QSqlQuery("PRAGMA user_version;", self.db)

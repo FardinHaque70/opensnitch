@@ -1,0 +1,158 @@
+#!/usr/bin/python3
+"""Supervise GTK with explicit account-default and development modes."""
+import argparse
+import fcntl
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'ui'))
+from opensnitch.gtkui.preflight import check, configuration_directory
+
+
+def arguments(pid):
+    try:
+        return (Path('/proc') / str(pid) / 'cmdline').read_bytes().split(b'\0')[:-1]
+    except (FileNotFoundError, ProcessLookupError, PermissionError):
+        return []
+
+
+def source_ui_processes():
+    targets = {str(ROOT / 'ui/bin/opensnitch-ui').encode()}
+    if getattr(args, 'default', False):
+        targets.add(b'/usr/bin/opensnitch-ui')
+    found = []
+    for path in Path('/proc').iterdir():
+        if not path.name.isdigit():
+            continue
+        try:
+            if path.stat().st_uid == os.getuid() and targets.intersection(arguments(int(path.name))):
+                found.append(int(path.name))
+        except OSError:
+            pass
+    return found
+
+
+def activate_existing():
+    from gi.repository import Gio, GLib
+    from opensnitch.gtkui.desktop import APPLICATION_ID
+    platform = {}
+    for variable, key in (('XDG_ACTIVATION_TOKEN', 'activation-token'), ('DESKTOP_STARTUP_ID', 'desktop-startup-id')):
+        if os.environ.get(variable):
+            platform[key] = GLib.Variant('s', os.environ[variable])
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        bus.call_sync(APPLICATION_ID, '/' + APPLICATION_ID.replace('.', '/'),
+            'org.freedesktop.Application', 'Activate', GLib.Variant('(a{sv})', (platform,)),
+            None, Gio.DBusCallFlags.NO_AUTO_START, 2000, None)
+    except GLib.Error:
+        print('GTK is already running; its session was left active.', flush=True)
+
+
+def stop_process(pid):
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(100):
+        if not arguments(pid):
+            return
+        time.sleep(.05)
+    raise RuntimeError('Development Qt UI did not exit; refusing to start another writer')
+
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--default', action='store_true', help='Account default: close to background and activate an existing instance')
+parser.add_argument('--start-hidden', action='store_true', help='Start the login session without presenting its main window')
+parser.add_argument('--rollback', action='store_true', help='Return the supervised session to Qt')
+args = parser.parse_args()
+directory = configuration_directory()
+lock_path = directory / 'gtk-development.lock'
+if args.rollback:
+    pid = int(lock_path.read_text())
+    if str(Path(__file__).resolve()).encode() not in arguments(pid):
+        raise SystemExit('The supervised GTK development session is not running')
+    os.kill(pid, signal.SIGUSR1 if b'--default' in arguments(pid) else signal.SIGTERM)
+    raise SystemExit(0)
+address = check()
+# Check the actual GTK runtime before touching the existing frontend.
+from opensnitch.gtkui.apps import GtkApplication
+from opensnitch.gtkui.live import LiveBackend
+
+directory.mkdir(parents=True, exist_ok=True)
+lock = open(lock_path, 'a+')
+try:
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    if not args.start_hidden:
+        activate_existing()
+    raise SystemExit(0)
+lock.seek(0); lock.truncate(); lock.write(str(os.getpid())); lock.flush()
+qt_processes = source_ui_processes()
+if len(qt_processes) > 1:
+    raise SystemExit('Multiple development Qt processes found; refusing ambiguous handoff')
+env = dict(os.environ, PYTHONPATH=str(ROOT / 'ui') + ':' + str(ROOT / 'ui/opensnitch'))
+child = None
+stopping = False
+stop_started = None
+restore_requested = True
+
+def rollback_signal(signum, *unused):
+    global stopping, stop_started, restore_requested
+    if args.default and signum in (signal.SIGTERM, signal.SIGINT):
+        restore_requested = False
+    stopping = True
+    stop_started = time.monotonic()
+    if child and child.poll() is None:
+        child.send_signal(signal.SIGTERM)
+
+signal.signal(signal.SIGTERM, rollback_signal)
+signal.signal(signal.SIGINT, rollback_signal)
+signal.signal(signal.SIGUSR1, rollback_signal)
+try:
+    for pid in qt_processes:
+        stop_process(pid)
+    with tempfile.TemporaryDirectory(prefix='opensnitch-gtk-ready-') as temporary:
+        ready = Path(temporary) / 'ready'
+        exit_reason = Path(temporary) / 'exit-reason'
+        with open('/tmp/opensnitch-gtk-live.log', 'ab') as log:
+            child = subprocess.Popen(['/usr/bin/python3', '-u', '-m', 'opensnitch.gtkui',
+                '--socket', address, '--ready-file', str(ready), '--exit-reason-file', str(exit_reason)] + (['--background-on-close'] if args.default else []) + (['--start-hidden'] if args.start_hidden else []), cwd=ROOT, env=env,
+                stdout=log, stderr=subprocess.STDOUT)
+            deadline = time.monotonic() + 30
+            while child.poll() is None and not ready.exists() and not stopping:
+                if time.monotonic() > deadline:
+                    print('Daemon did not connect within 30 seconds; restoring Qt.', flush=True)
+                    rollback_signal(signal.SIGUSR1)
+                    break
+                time.sleep(.1)
+            if ready.exists():
+                print('GTK ready: daemon connected; ' + ('closing the window keeps GTK active.' if args.default else 'close GTK to return to Qt.'), flush=True)
+            while child.poll() is None:
+                if stop_started is not None and time.monotonic() - stop_started > 10:
+                    child.kill()
+                try:
+                    child.wait(timeout=.2)
+                except subprocess.TimeoutExpired:
+                    pass
+
+        if exit_reason.exists() and exit_reason.read_text().strip() == 'quit':
+            restore_requested = False
+
+finally:
+    if child and child.poll() is None:
+        child.terminate()
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            child.kill(); child.wait()
+    if restore_requested and not source_ui_processes():
+        with open('/tmp/opensnitch-fork-ui.log', 'ab') as log:
+            source = ROOT / 'ui/bin/opensnitch-ui'
+            command = ['/usr/bin/python3', '-u', str(source), '--socket', address, '--background'] if source.is_file() else ['/usr/bin/opensnitch-ui']
+            restored = subprocess.Popen(command, cwd=ROOT if ROOT.is_dir() else Path.home(), env=env,
+                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            print('Restored Qt frontend PID:', restored.pid, flush=True)
+    lock.close()

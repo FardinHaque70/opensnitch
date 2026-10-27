@@ -6,6 +6,10 @@ import tempfile
 import time
 from unittest.mock import patch
 
+# Never fall back to the user's real catalog/settings when run directly.
+_isolated_config = tempfile.TemporaryDirectory(prefix='opensnitch-app-smoke-')
+os.environ['XDG_CONFIG_HOME'] = _isolated_config.name
+
 from PyQt5 import QtCore, QtGui, QtWidgets, QtTest
 
 app = QtWidgets.QApplication([])

@@ -7,6 +7,7 @@ import logging
 
 from PyQt5 import QtCore
 
+from opensnitch.core.protocol import to_proto as rule_to_proto, rule_files_snapshot
 from opensnitch.application_catalog import ApplicationCatalog
 from opensnitch.application_controls import ApplicationAccessController
 from opensnitch.application_identity import ApplicationIdentityService
@@ -21,31 +22,10 @@ import opensnitch.proto as proto
 ui_pb2, _ = proto.import_()
 
 
-def rule_files_snapshot(configuration):
-    """Track external writes without reading the daemon's root-only files."""
-    config = json.loads(configuration or '{}')
-    directory = Path(config.get('Rules', {}).get('Path') or '/etc/opensnitchd/rules')
-    result = {}
-    for path in directory.iterdir():
-        if path.suffix == '.json':
-            stat = path.stat()
-            result[path.name] = (stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
-    return result
 
 
 def to_proto(rule):
-    result = ui_pb2.Rule(name=rule.name, action=rule.action, duration=rule.duration,
-                         enabled=rule.enabled, precedence=rule.precedence,
-                         created=rule.created, description=rule.description, nolog=rule.nolog)
-    def fill(target, value):
-        target.type = value.get('type', '')
-        target.operand = value.get('operand', '')
-        target.data = value.get('data', '')
-        target.sensitive = value.get('sensitive', False)
-        for child in value.get('list', ()):
-            fill(target.list.add(), child)
-    fill(result.operator, rule.operator)
-    return result
+    return rule_to_proto(rule, ui_pb2.Rule)
 
 
 class _NotificationCallback:

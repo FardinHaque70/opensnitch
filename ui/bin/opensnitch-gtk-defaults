@@ -1,0 +1,19 @@
+#!/usr/bin/python3
+"""Install or restore account-level GTK desktop/login defaults."""
+import argparse
+from pathlib import Path
+import sys
+root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(root / 'ui'))
+from opensnitch.gtkui.defaults import install, restore
+from opensnitch.gtkui.preflight import check
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--restore', action='store_true')
+args = parser.parse_args()
+if args.restore:
+    restore()
+    print('Previous account launcher and login startup restored.')
+else:
+    check()
+    result = install(root)
+    print('GTK default launcher:', result['launcher'])
