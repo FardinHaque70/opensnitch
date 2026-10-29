@@ -138,6 +138,26 @@ class AppsWindow(Adw.ApplicationWindow):
         self.refresh_button = Gtk.Button(child=refresh_content, action_name='app.refresh')
         self.refresh_button.set_tooltip_text('Reload applications and current rules')
         actions.append(self.refresh_button)
+        self.filtering_buttons = {}
+        self.filtering_status = None
+        self._updating_filtering = False
+        if self.live:
+            filtering = Gtk.Box(spacing=8, valign=Gtk.Align.CENTER, margin_start=18, margin_end=18, margin_top=6, margin_bottom=4)
+            filtering.append(label('App filtering', xalign=0, hexpand=True))
+            self.filtering_status = label('Unavailable', 'dim-label')
+            choices = Gtk.Box(spacing=0)
+            choices.add_css_class('linked')
+            for title, enabled in (('On', True), ('Off', False)):
+                button = Gtk.ToggleButton(label=title, sensitive=False)
+                if self.filtering_buttons:
+                    button.set_group(next(iter(self.filtering_buttons.values())))
+                button.set_tooltip_text(('Enable' if enabled else 'Pause') + ' app filtering on this computer; saved rules stay in place.')
+                button.connect('clicked', self.change_filtering, enabled)
+                self.filtering_buttons[enabled] = button
+                choices.append(button)
+            filtering.append(choices)
+            filtering.append(self.filtering_status)
+            self.root_view.add_top_bar(filtering)
         if self.live:
             cleanup = Gtk.Button(label='Clean up…', action_name='app.cleanup-stale')
             cleanup.set_tooltip_text('Review unavailable temporary entries and matching rules')
@@ -241,6 +261,7 @@ class AppsWindow(Adw.ApplicationWindow):
         self.filter_rows()
 
     def apply_snapshot(self, snapshot):
+        self.update_filtering(snapshot.interception)
         records = tuple(AppRow.from_snapshot(record) for record in snapshot.applications)
         if records == self.records:
             self.note.set_text(snapshot.message)
@@ -307,6 +328,24 @@ class AppsWindow(Adw.ApplicationWindow):
             adjustment.set_value(min(position, max(0, adjustment.get_upper() - adjustment.get_page_size())))
             return False
         GLib.idle_add(restore)
+
+    def update_filtering(self, state):
+        if not self.filtering_buttons:
+            return
+        self._updating_filtering = True
+        for enabled, button in self.filtering_buttons.items():
+            button.set_active(state.enabled is enabled)
+            button.set_sensitive(state.available)
+            button.set_tooltip_text(state.error or ('Enable' if enabled else 'Pause') + ' app filtering on this computer; saved rules stay in place.')
+        text = ('Resuming…' if state.requested else 'Pausing…') if state.pending else ('On' if state.enabled else 'Off') if state.enabled is not None else 'Not confirmed'
+        self.filtering_status.set_text(text)
+        self._updating_filtering = False
+
+    def change_filtering(self, button, enabled):
+        if not self._updating_filtering:
+            backend = getattr(self.get_application(), 'backend', None)
+            if backend:
+                backend.request_interception(enabled)
 
     def filter_rows(self, *args):
         if self._filtering:
@@ -534,7 +573,7 @@ class GtkApplication(Adw.Application):
             if self.live_socket:
                 from .tray import TrayIcon
                 try:
-                    self.tray = TrayIcon(self.present_main, self.close_window, self.tray_available, self.tray_activation_token)
+                    self.tray = TrayIcon(self.present_main, self.close_window, self.tray_available, self.tray_activation_token, self.toggle_filtering)
                     self.tray.start()
                     self.tray_available(False)
                     self.backend.subscribe(self.tray.update)
@@ -555,6 +594,12 @@ class GtkApplication(Adw.Application):
     def tray_activation_token(self, token):
         if token and self.window:
             self.window.set_startup_id(token)
+
+    def toggle_filtering(self, enabled=None):
+        if hasattr(self, 'backend'):
+            state = self.backend.snapshot.interception
+            if state.available:
+                self.backend.request_interception(not state.enabled if enabled is None else enabled)
 
     def show_cleanup(self, *args):
         if not self.live_socket or not hasattr(self, 'backend'):

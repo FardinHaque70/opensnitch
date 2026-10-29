@@ -76,15 +76,22 @@ def snapshot_status(snapshot):
         return 'Daemon disconnected'
     # Reuse authoritative backend wording, without the app-control explanation.
     status = snapshot.message.split(' · Access applies to the selected executable.', 1)[0]
-    return 'Connected' + (' · ' + status if status else '') + (' · Updating rules' if not snapshot.authoritative else '')
+    result = 'Connected' + (' · ' + status if status else '') + (' · Updating rules' if not snapshot.authoritative else '')
+    if snapshot.interception.pending:
+        result += ' · ' + ('Resuming app filtering…' if snapshot.interception.requested else 'Pausing app filtering…')
+    if snapshot.interception.error:
+        result += ' · ' + snapshot.interception.error
+    return result
 
 
 class TrayIcon:
-    OPEN, STATUS, SEPARATOR, QUIT = 1, 2, 3, 4
+    OPEN, STATUS, SEPARATOR, QUIT, FILTERING, RESUME = 1, 2, 3, 4, 5, 6
 
-    def __init__(self, on_open, on_quit, on_available, on_token=None):
+    def __init__(self, on_open, on_quit, on_available, on_token=None, on_toggle=None):
         self.on_open, self.on_quit, self.on_available = on_open, on_quit, on_available
         self.on_token = on_token
+        self.on_toggle = on_toggle
+        self.filtering = None
         self.status = 'Connecting to daemon…'
         self.connection = None
         self.registered = False
@@ -150,8 +157,9 @@ class TrayIcon:
 
     def update(self, snapshot):
         status = snapshot_status(snapshot)
-        if status == self.status:
+        if status == self.status and self.filtering == snapshot.interception:
             return
+        self.filtering = snapshot.interception
         self.status = status
         self.revision += 1
         self._emit(ITEM_PATH, ITEM, 'NewToolTip')
@@ -192,6 +200,15 @@ class TrayIcon:
             props = {'children-display': GLib.Variant('s', 'submenu')}
         elif item == self.SEPARATOR:
             props = {'type': GLib.Variant('s', 'separator')}
+        elif item in (self.FILTERING, self.RESUME) and self.on_toggle:
+            state = self.filtering
+            text = 'Resume app filtering' if item == self.RESUME else 'Pause app filtering'
+            if state and state.pending:
+                text = 'Resuming app filtering…' if state.requested else 'Pausing app filtering…'
+            elif state and state.enabled is not None:
+                text = 'Pause app filtering' if state.enabled else 'Resume app filtering'
+            props = {'label': GLib.Variant('s', text), 'enabled': GLib.Variant('b', bool(state and state.available)),
+                     'visible': GLib.Variant('b', True)}
         elif item in (self.OPEN, self.STATUS, self.QUIT):
             props = {'label': GLib.Variant('s', {self.OPEN: 'Open OpenSnitch', self.STATUS: self.status, self.QUIT: 'Quit OpenSnitch'}[item]),
                      'enabled': GLib.Variant('b', item != self.STATUS), 'visible': GLib.Variant('b', True)}
@@ -201,11 +218,22 @@ class TrayIcon:
         children = []
         if parent == 0 and depth != 0:
             children = [GLib.Variant('(ia{sv}av)', (item, self._properties(item, names), []))
-                        for item in (self.OPEN, self.STATUS, self.SEPARATOR, self.QUIT)]
+                        for item in self._ids()]
         return parent, self._properties(parent, names), children
 
+    def _ids(self):
+        controls = ()
+        if self.on_toggle:
+            controls = (self.FILTERING,) if self.filtering and self.filtering.enabled is not None else (self.FILTERING, self.RESUME)
+        return (self.OPEN, self.STATUS) + controls + (self.SEPARATOR, self.QUIT)
+
     def _event(self, item, event):
-        if item not in (0, self.OPEN, self.STATUS, self.SEPARATOR, self.QUIT):
+        if item in (self.FILTERING, self.RESUME) and self.on_toggle:
+            if event == 'clicked' and self.filtering and self.filtering.available:
+                target = item == self.RESUME if self.filtering.enabled is None else not self.filtering.enabled
+                GLib.idle_add(self._run, lambda: self.on_toggle(target))
+            return True
+        if item not in (0, *self._ids()):
             return False
         callback = {self.OPEN: self.on_open, self.QUIT: self.on_quit}.get(item)
         if event == 'clicked' and callback:
@@ -219,7 +247,7 @@ class TrayIcon:
             invocation.return_value(GLib.Variant('(u(ia{sv}av))', (self.revision, self._layout(parent, depth, names))))
         elif method == 'GetGroupProperties':
             ids, names = values
-            ids = ids or [0, self.OPEN, self.STATUS, self.SEPARATOR, self.QUIT]
+            ids = ids or [0, *self._ids()]
             invocation.return_value(GLib.Variant('(a(ia{sv}))', ([(item, self._properties(item, names)) for item in ids if self._properties(item)],)))
         elif method == 'GetProperty':
             item, name = values

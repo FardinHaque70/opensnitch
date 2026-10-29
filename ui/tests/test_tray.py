@@ -4,7 +4,7 @@ from dataclasses import replace
 import time
 import unittest
 from gi.repository import Gio, GLib
-from opensnitch.core.backend import BackendSnapshot
+from opensnitch.core.backend import BackendSnapshot, InterceptionState
 from opensnitch.gtkui.tray import TrayIcon, snapshot_status, ITEM, MENU, ITEM_PATH, MENU_PATH, WATCHER
 
 WATCHER_XML = '''<node><interface name="org.kde.StatusNotifierWatcher">
@@ -106,6 +106,26 @@ class TrayTests(unittest.TestCase):
         self.assertEqual(self.tray.status, 'Daemon disconnected')
         self.assertGreater(self.tray.revision, revision)
         self.assertIn('Updating rules', snapshot_status(replace(snapshot, authoritative=False)))
+
+    def test_filtering_menu_follows_confirmed_state_and_blocks_pending_clicks(self):
+        self.tray.on_toggle = lambda enabled: self.actions.append(('filtering', enabled))
+        state = InterceptionState(True, True)
+        self.tray.update(BackendSnapshot((), True, True, 'Interception enabled', interception=state))
+        layout = self.call(MENU_PATH, MENU, 'GetLayout', GLib.Variant('(iias)', (0, -1, []))).unpack()[1]
+        rows = {row[0]: row[1] for row in layout[2]}
+        self.assertEqual(rows[5]['label'], 'Pause app filtering')
+        self.assertTrue(rows[5]['enabled'])
+        self.call(MENU_PATH, MENU, 'Event', GLib.Variant('(isvu)', (5, 'clicked', GLib.Variant('i', 0), 0)))
+        spin(lambda: self.actions == [('filtering', False)])
+        self.tray.update(BackendSnapshot((), True, True, 'Interception enabled', interception=InterceptionState(True, False, True, False)))
+        self.call(MENU_PATH, MENU, 'Event', GLib.Variant('(isvu)', (5, 'clicked', GLib.Variant('i', 0), 0)))
+        self.assertEqual(self.actions, [('filtering', False)])
+        props = self.call(MENU_PATH, MENU, 'GetGroupProperties', GLib.Variant('(aias)', ([5], []))).unpack()[0][0][1]
+        self.assertFalse(props['enabled'])
+        self.assertEqual(props['label'], 'Pausing app filtering…')
+        self.tray.update(BackendSnapshot((), True, True, 'Interception paused', interception=InterceptionState(False, True)))
+        props = self.call(MENU_PATH, MENU, 'GetGroupProperties', GLib.Variant('(aias)', ([5], []))).unpack()[0][0][1]
+        self.assertEqual(props['label'], 'Resume app filtering')
 
     def test_watcher_restart_reregisters_once(self):
         count = len(self.watcher.items)

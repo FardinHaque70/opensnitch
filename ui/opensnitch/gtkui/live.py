@@ -90,6 +90,9 @@ class LiveBackend:
     def subscribe(self, callback):
         return self.session.subscribe(callback)
 
+    def request_interception(self, enabled):
+        return self.session.request_interception(enabled)
+
     def request_policy(self, key, action, duration='always'):
         return self.session.request_policy(key, action, duration)
 

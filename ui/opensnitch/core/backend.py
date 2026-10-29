@@ -26,12 +26,22 @@ class ApplicationSnapshot:
 
 
 @dataclass(frozen=True)
+class InterceptionState:
+    enabled: bool | None = None
+    available: bool = False
+    pending: bool = False
+    requested: bool | None = None
+    error: str = ''
+
+
+@dataclass(frozen=True)
 class BackendSnapshot:
     applications: Tuple[ApplicationSnapshot, ...]
     connected: bool = False
     authoritative: bool = False
     message: str = ''
     rules: Tuple[RuleRecord, ...] = ()
+    interception: InterceptionState = InterceptionState()
 
 
 class ApplicationBackend(Protocol):

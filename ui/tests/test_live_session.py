@@ -59,9 +59,9 @@ class TestLiveSession(unittest.TestCase):
                 continue
             fn(*args)
 
-    def connect(self, rules=None):
+    def connect(self, rules=None, filtering=True):
         self.serial = getattr(self, 'serial', 0) + 1
-        configuration = pb.ClientConfig(id=self.serial, name='Fixture computer', isFirewallRunning=True,
+        configuration = pb.ClientConfig(id=self.serial, name='Fixture computer', isFirewallRunning=filtering,
             config=json.dumps({'Rules': {'Path': str(self.rules)}}),
             rules=[to_proto(rule, pb.Rule) for rule in ([self.rule] if rules is None else rules)])
         self.daemon.stub.Subscribe(configuration, timeout=2)
@@ -131,6 +131,76 @@ class TestLiveSession(unittest.TestCase):
         self.assertTrue(job.finished)
         self.assertIn('available again', job.error)
         self.assertFalse(self.model.controller.pending)
+
+    def test_interception_pause_requires_ack_and_keeps_saved_rules(self):
+        before = (self.rules / 'existing.json').read_bytes()
+        self.assertIsNone(self.model.snapshot.interception.enabled)
+        self.assertTrue(self.model.snapshot.interception.available)
+        self.assertTrue(self.model.request_interception(False))
+        self.assertFalse(self.model.request_interception(False))
+        message = self.incoming.result(timeout=2)
+        self.assertEqual(message.type, pb.DISABLE_INTERCEPTION)
+        self.assertFalse(message.rules)
+        self.assertIsNone(self.model.snapshot.interception.enabled)
+        self.assertTrue(self.model.snapshot.interception.pending)
+        self.daemon.replies.put(pb.NotificationReply(id=message.id, code=pb.OK))
+        self.pump(lambda: not self.model.snapshot.interception.pending)
+        self.assertFalse(self.model.snapshot.interception.enabled)
+        self.assertTrue(self.model.snapshot.interception.available)
+        self.assertEqual((self.rules / 'existing.json').read_bytes(), before)
+        self.assertTrue(self.model.nodes[self.key[0]].isFirewallRunning)
+
+    def test_interception_resume_requires_ack(self):
+        self.connect(filtering=False)
+        self.assertTrue(self.model.request_interception(True))
+        message = self.incoming.result(timeout=2)
+        self.assertEqual(message.type, pb.ENABLE_INTERCEPTION)
+        self.assertFalse(self.model.snapshot.interception.enabled)
+        self.daemon.replies.put(pb.NotificationReply(id=message.id, code=pb.OK))
+        self.pump(lambda: not self.model.snapshot.interception.pending)
+        self.assertTrue(self.model.snapshot.interception.enabled)
+        self.assertTrue(self.model.snapshot.interception.available)
+
+    def test_interception_rejection_does_not_display_success(self):
+        self.assertTrue(self.model.request_interception(False))
+        message = self.incoming.result(timeout=2)
+        self.daemon.replies.put(pb.NotificationReply(id=message.id, code=pb.ERROR, data='Fixture rejection'))
+        self.pump(lambda: bool(self.model.snapshot.interception.error))
+        self.assertIsNone(self.model.snapshot.interception.enabled)
+        self.assertFalse(self.model.snapshot.interception.pending)
+        self.assertTrue(self.model.snapshot.interception.available)
+        self.assertIn('rejection', self.model.snapshot.interception.error)
+
+    def test_interception_timeout_ignores_late_reply(self):
+        self.assertTrue(self.model.request_interception(False))
+        message = self.incoming.result(timeout=2)
+        with patch('opensnitch.core.session.time.monotonic', return_value=time.monotonic() + 20):
+            self.model.tick()
+        self.assertFalse(self.model.snapshot.interception.pending)
+        self.assertIn('timed out', self.model.snapshot.interception.error)
+        self.daemon.replies.put(pb.NotificationReply(id=message.id, code=pb.OK))
+        self.connect(filtering=True)
+        self.assertIsNone(self.model.snapshot.interception.enabled)
+        self.assertFalse(self.model.snapshot.interception.pending)
+        self.assertIn('timed out', self.model.snapshot.interception.error)
+
+    def test_interception_disconnect_and_reconnect_do_not_infer_pause_state(self):
+        self.assertTrue(self.model.request_interception(False))
+        self.incoming.result(timeout=2)
+        self.model.transport.disconnect(self.key[0])
+        self.pump(lambda: not self.model.online(self.key[0]))
+        self.assertIsNone(self.model.snapshot.interception.enabled)
+        self.assertFalse(self.model.snapshot.interception.available)
+        self.assertFalse(self.model.snapshot.interception.pending)
+        self.connect(filtering=True)
+        self.assertIsNone(self.model.snapshot.interception.enabled)
+        self.assertTrue(self.model.snapshot.interception.available)
+
+    def test_interception_is_disabled_during_rule_operation(self):
+        self.assertTrue(self.model.request_policy(self.key, 'deny'))
+        self.assertFalse(self.model.snapshot.interception.available)
+        self.assertFalse(self.model.request_interception(False))
+        self.assertEqual(self.incoming.result(timeout=2).type, pb.CHANGE_RULE)
 
     def test_disabled_temporary_rule_is_not_treated_as_active_expiry(self):
         self.model.policies.replace_rules(self.key[0], [replace(self.rule, enabled=False, duration='1h', created=0)])

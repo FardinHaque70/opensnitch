@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 import time
 
-from .backend import ApplicationSnapshot, BackendSnapshot
+from .backend import ApplicationSnapshot, BackendSnapshot, InterceptionState
 from .catalog import CatalogCore
 from .controls import AccessControllerCore
 from .events import Event
@@ -50,6 +50,11 @@ class ApplicationSession:
         self.error = ''
         self.transport = self.history = self._lease = self.sockets = self.activity = None
         self.cleanup_job = None
+        self._interception_pending = None
+        self._interception_known = False
+        self._interception_enabled = None
+        self._interception_error = ''
+        self._interception_serial = 0
         self.application_snapshots = {}
         self.snapshot = BackendSnapshot((), message='Waiting for the daemon…')
         self.controller = AccessControllerCore(self.catalog, self.policies, self._send,
@@ -143,10 +148,17 @@ class ApplicationSession:
                     self.catalog.observe_many(node, self.identities.installed_executables(), 'installed')
                 if self.history:
                     self.history.submit('subscription', node, data)
+                if node == 'unix:/local':
+                    self._interception_subscribed(configuration.isFirewallRunning)
             elif kind == 'connected':
                 self._online.add(node)
             elif kind == 'disconnect':
                 self._online.discard(node)
+                if node == 'unix:/local':
+                    self._interception_known = False
+                    pending = self._interception_pending
+                    if pending and pending['phase'] == 'sending':
+                        self._interception_failed(pending['serial'], 'Daemon disconnected before confirming the change.')
                 self.controller.check_timeouts()
                 if self.history:
                     self.history.submit('disconnect', node)
@@ -186,6 +198,8 @@ class ApplicationSession:
         return self.verify_node(entry.node_id)
 
     def verify_node(self, node):
+        if self._interception_pending and node == 'unix:/local':
+            return 'An app filtering change is awaiting the daemon.'
         if self.error:
             return self.error
         if self.controller.general_pending(node):
@@ -203,6 +217,62 @@ class ApplicationSession:
         except (OSError, ValueError, KeyError, TypeError):
             return 'The current rules could not be verified. Refresh policies.'
         return ''
+
+    def interception_state(self):
+        node = 'unix:/local'
+        pending = self._interception_pending
+        enabled = self._interception_enabled if self.online(node) and self._interception_known else None
+        busy = bool(self.controller.pending or self._checksum_pending or
+                    (self.cleanup_job and not self.cleanup_job.finished))
+        available = (self.online(node) and not pending and not busy and node not in self._stale
+                     and self.transport is not None and not self.transport.has_prompts(node))
+        return InterceptionState(enabled, available, bool(pending), pending['target'] if pending else None, self._interception_error)
+
+    def request_interception(self, enabled):
+        if type(enabled) is not bool:
+            raise ValueError('App filtering must be on or off.')
+        state = self.interception_state()
+        if not state.available or state.enabled == enabled:
+            self.publish()
+            return False
+        self._interception_serial += 1
+        serial = self._interception_serial
+        self._interception_pending = dict(serial=serial, target=enabled, phase='sending', deadline=time.monotonic() + 15)
+        self._interception_error = ''
+        self.publish()
+        def replied(success, error=''):
+            pending = self._interception_pending
+            if self._closed or not pending or pending['serial'] != serial:
+                return
+            if not success:
+                self._interception_failed(serial, error or 'The daemon rejected the change.')
+                return
+            self._interception_enabled = pending['target']
+            self._interception_known = True
+            self._interception_pending = None
+            self.publish()
+        try:
+            self.transport.send('unix:/local', pb.Notification(type=pb.ENABLE_INTERCEPTION if enabled else pb.DISABLE_INTERCEPTION), replied)
+        except Exception as error:
+            self._interception_failed(serial, str(error))
+        return True
+
+    def _interception_failed(self, serial, error):
+        pending = self._interception_pending
+        if not pending or pending['serial'] != serial:
+            return
+        self._interception_pending = None
+        self._interception_known = False
+        self._interception_error = error + ' Choose On or Off to retry.'
+        self._message(self._interception_error)
+        self.publish()
+
+    def _interception_subscribed(self, enabled):
+        # 1.7.2 isFirewallRunning is the initialized firewall service, not the
+        # pause flag. It stays true after DISABLE_INTERCEPTION. Never use true
+        # to overwrite an acknowledged pause or claim a confirmed On state.
+        self._interception_known = not enabled
+        self._interception_enabled = False if not enabled else None
 
     def start_cleanup(self, plan, changed):
         from .cleanup import CleanupJob
@@ -269,6 +339,9 @@ class ApplicationSession:
         if self._closed:
             return
         self.controller.check_timeouts()
+        pending = self._interception_pending
+        if pending and time.monotonic() >= pending['deadline']:
+            self._interception_failed(pending['serial'], 'App filtering change timed out.')
         if self.cleanup_job:
             self.cleanup_job.tick()
         if self.sockets:
@@ -433,7 +506,10 @@ class ApplicationSession:
             if ('observed' in row.sources or 'rules' in row.sources) and self._logged_policies.get(row.key) != state:
                 logging.info('Application policy: node=%s executable=%s group=%s action=%s duration=%s controls=%s', row.identity.node_id, row.identity.executable_path, row.policy, row.action, row.duration, row.error or 'enabled')
                 self._logged_policies[row.key] = state
-        statuses = ['Interception ' + ('enabled' if config.isFirewallRunning else 'paused') for node, config in self.nodes.items() if node in self._online]
+        statuses = [('App filtering status unavailable' if node == 'unix:/local' and not self._interception_known
+                     else 'Interception ' + ('enabled' if self._interception_enabled else 'paused') if node == 'unix:/local'
+                     else 'Interception ' + ('enabled' if config.isFirewallRunning else 'paused'))
+                    for node, config in self.nodes.items() if node in self._online]
         message = (' · '.join(statuses) if statuses else 'Daemon disconnected') + ' · Access applies to the selected executable.'
         if self.error:
             message += ' ' + self.error
@@ -450,7 +526,7 @@ class ApplicationSession:
                     reason = self.verify_node(node)
                 rule_statuses[node] = reason or 'Current daemon snapshot'
         rule_rows = self.rule_index.project(self.policies.rules, rule_statuses)
-        self.snapshot = BackendSnapshot(tuple(rows), bool(self._online), bool(self._online) and not self._stale, message, rule_rows)
+        self.snapshot = BackendSnapshot(tuple(rows), bool(self._online), bool(self._online) and not self._stale, message, rule_rows, self.interception_state())
         self.changed.emit(self.snapshot)
 
     def close(self):
