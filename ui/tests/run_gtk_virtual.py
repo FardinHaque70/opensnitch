@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--check', choices=('inventory', 'prompts', 'live', 'services', 'connections', 'activity', 'rules', 'editor', 'default', 'cleanup', 'interception'), default='inventory')
+parser.add_argument('--check', choices=('inventory', 'prompts', 'live', 'services', 'connections', 'activity', 'rules', 'editor', 'default', 'cleanup', 'interception', 'screenshots'), default='inventory')
 parser.add_argument('--scale', choices=('1', '1.25'), default='1')
 args = parser.parse_args()
 repository = Path(__file__).resolve().parents[2]
@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix='opensnitch-gtk-display-') as directory:
     observer = root / 'window-types.js'
     observer.write_text('workspace.windowAdded.connect(function(w) { print("OPENSNITCH_WINDOW=" + w.caption + ";dialog=" + w.dialog + ";modal=" + w.modal); print("OPENSNITCH_APP_ID=" + w.desktopFileName); if (w.caption === "OpenSnitch — Development") { print("OPENSNITCH_MAIN_MODAL=" + w.modal); } if (w.caption === "Edit rule" || w.caption === "New rule") { print("OPENSNITCH_EDITOR_MODAL=" + w.modal); } if (w.caption.indexOf("Connection request") >= 0) { print("OPENSNITCH_PROMPT_DIALOG=" + w.dialog); print("OPENSNITCH_PROMPT_MODAL=" + w.modal); } });')
     launcher = root / 'check'
-    script = {'inventory': 'gtk_inventory_smoke.py', 'prompts': 'gtk_prompt_smoke.py', 'live': 'gtk_live_smoke.py', 'services': 'gtk_services_smoke.py', 'connections': 'gtk_connections_smoke.py', 'activity': 'gtk_activity_smoke.py', 'rules': 'gtk_rules_smoke.py', 'editor': 'gtk_rule_editor_smoke.py', 'default': 'gtk_default_smoke.py', 'cleanup': 'gtk_cleanup_smoke.py', 'interception': 'gtk_interception_smoke.py'}[args.check]
+    script = {'inventory': 'gtk_inventory_smoke.py', 'prompts': 'gtk_prompt_smoke.py', 'live': 'gtk_live_smoke.py', 'services': 'gtk_services_smoke.py', 'connections': 'gtk_connections_smoke.py', 'activity': 'gtk_activity_smoke.py', 'rules': 'gtk_rules_smoke.py', 'editor': 'gtk_rule_editor_smoke.py', 'default': 'gtk_default_smoke.py', 'cleanup': 'gtk_cleanup_smoke.py', 'interception': 'gtk_interception_smoke.py', 'screenshots': 'gtk_docs_screenshots.py'}[args.check]
     launcher.write_text('#!/usr/bin/python3\nimport subprocess\n'
         + ('subprocess.run(["gdbus","call","--session","--dest","org.kde.KWin","--object-path","/Scripting","--method","org.kde.kwin.Scripting.loadScript",' + repr(str(observer)) + ',"opensnitch-test-observer"],check=True)\n'
            + 'subprocess.run(["gdbus","call","--session","--dest","org.kde.KWin","--object-path","/Scripting","--method","org.kde.kwin.Scripting.start"],check=True)\n' if args.check in ('prompts', 'live', 'connections', 'editor', 'default', 'cleanup') else '')
@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix='opensnitch-gtk-display-') as directory:
     if unmount:
         subprocess.run([unmount, '-u', str(root / 'runtime/doc')],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    marker = {'inventory': 'PASS: real backend isolation', 'prompts': 'PASS: native prompt queue', 'live': 'PASS: native live Apps', 'services': 'PASS: native Services', 'connections': 'PASS: native Connections', 'activity': 'PASS: native Activity', 'rules': 'PASS: native Advanced Rules', 'editor': 'PASS: native rule editor', 'default': 'PASS: default GTK session', 'cleanup': 'PASS: native cleanup review', 'interception': 'PASS: native filtering switch'}[args.check]
+    marker = {'inventory': 'PASS: real backend isolation', 'prompts': 'PASS: native prompt queue', 'live': 'PASS: native live Apps', 'services': 'PASS: native Services', 'connections': 'PASS: native Connections', 'activity': 'PASS: native Activity', 'rules': 'PASS: native Advanced Rules', 'editor': 'PASS: native rule editor', 'default': 'PASS: default GTK session', 'cleanup': 'PASS: native cleanup review', 'interception': 'PASS: native filtering switch', 'screenshots': 'PASS: documentation screenshots'}[args.check]
     passed = marker in result and 'Traceback' not in result
     if args.check == 'default':
         passed = passed and 'OPENSNITCH_MAIN_MODAL=true' in result

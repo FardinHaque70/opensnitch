@@ -16,7 +16,7 @@ The supervisor checks compatibility, stops only this checkout's Qt frontend, sta
 ui/bin/opensnitch-gtk-dev --rollback
 ```
 
-Logs: `/tmp/opensnitch-gtk-live.log`, `/tmp/opensnitch-gtk-supervisor.log`, and `/tmp/opensnitch-fork-ui.log`. Handoff and rollback were exercised against the installed 1.7.2 daemon; its PID and all 15 rule-file metadata records remained unchanged.
+Logs: `/tmp/opensnitch-gtk-live.log`, `/tmp/opensnitch-gtk-supervisor.log`, and `/tmp/opensnitch-fork-ui.log`. Handoff and rollback were exercised against the installed 1.7.2 daemon without restarting it or changing rule files.
 
 An independent read-only view remains available during the migration:
 
@@ -69,7 +69,7 @@ QT_QPA_PLATFORM=offscreen PYTHONPATH=ui:ui/opensnitch /usr/bin/python3 ui/tests/
 /usr/bin/python3 ui/tests/run_gtk_virtual.py --check default --scale 1
 ```
 
-The 149 focused tests cover inventory, metadata/provenance, action ownership, transport correlation, cancellation/reconnects, rule construction, checksum confirmation/timeouts, raw history and existing Qt workflows. Native checks use a fake daemon and temporary state, exercising grouping, stable rows/selection/scroll, search, direct controls, rejected replies and prompt round trips. The private virtual compositor verifies 100%/125% rendering and KWin's modal property. It does not alter the desktop session. Captures stay under `/tmp`.
+The focused tests cover inventory, metadata/provenance, action ownership, transport correlation, cancellation/reconnects, rule construction, checksum confirmation/timeouts, raw history and existing Qt workflows. Native checks use a fake daemon and temporary state, exercising grouping, stable rows/selection/scroll, search, direct controls, rejected replies and prompt round trips. The private virtual compositor verifies 100%/125% rendering and KWin's modal property. It does not alter the desktop session. Captures stay under `/tmp`.
 
 Optional isolated visual prompt check:
 
@@ -79,7 +79,7 @@ PYTHONPATH=ui /usr/bin/python3 ui/tests/gtk_prompt_smoke.py --interactive
 
 This displays a labelled test request with a paused countdown. Choices go to a fake daemon and are discarded. It reads no live inventory/preferences, launches no program and does not contact the example destination.
 
-## Remaining checkpoints
+## Remaining checkpoints and reduced GTK scope
 
 - [x] Shared foundation and Qt regression verification.
 - [x] Real read-only Apps visual confirmation.
@@ -93,12 +93,22 @@ This displays a labelled test request with a paused countdown. Choices go to a f
 - [x] Desktop visual confirmation of Activity and removal of duplicate detail-pane window controls.
 - [x] Desktop visual confirmation of Advanced Rules inspection.
 - [x] Desktop visual confirmation of native create/edit/duplicate/enable/disable/delete and flat AND condition editing.
-- [ ] Rule rename, multi-node/bulk operations and rule import/export parity before Qt retirement.
-- [ ] Apps manual add/hide and remaining legacy detail-navigation parity before Qt retirement.
-- [ ] Port rule/compound editors, system firewall, nodes, preferences, alerts/details, diagnostics, exports, remaining notifications, translations, autostart and supported plugin/action hooks.
-- [ ] Verify workflow parity and installed assets, switch the default launcher, then remove retired Qt adapters/views/resources/dependencies and obsolete development launchers.
+- [x] Native KDE tray, tray startup and account-local default launchers.
+- [x] Reviewed temporary-app/rule cleanup and duplicate launcher fix.
+- [x] Acknowledgment-aware App filtering On/Off and tray Pause/Resume, visually verified.
+- [ ] Reliable Wine/Proton program and prefix identity and scoped blocking. The read-only Bloodborne work is paused outside the committed tree; no per-game isolation is shipped.
+- [ ] Essential preferences and manual native-app inventory workflows.
+- [ ] Clean-install/package asset checks, GTK dependencies/translations and the default packaged launcher.
+- [ ] Document deferred workflows, complete blocking-focused acceptance checks, then remove Qt adapters/views/resources/dependencies and temporary launchers.
 
-No daemon, protocol, rule format or history schema changes are part of this migration. Keep changes uncommitted until requested; do not push or open a PR.
+The current product priority is reliable native and Windows-app blocking. Full
+advanced-workflow parity is deferred: system firewall/blocklist editors, node
+administration, diagnostics, complex rule editing and bulk/import workflows,
+TLS endpoints and action hooks remain on Qt. They are not silently treated as
+implemented. Qt retirement requires an explicit supported-feature boundary and
+package checks, rather than completion of every upstream advanced feature.
+
+No daemon, protocol, rule format or history schema changes are part of this migration.
 
 ## Frontend and backend executables
 
@@ -126,7 +136,7 @@ Apps and Services share the same authoritative application snapshots and acknowl
 
 The native table provides protocol/family/state/node filters, text search, raw executable sorting, column visibility/order/width and sorting persistence in a separate versioned `gtk-layout.json`, preserving Qt header data. It keeps selection and scrolling stable during updates, exports/copies raw identifiers, shows all socket fields in details and links the exact node/executable to Apps. Live process monitoring and diagnostic breakdown navigation remain on the Advanced workflow checklist; the existing Qt fallback preserves those workflows during migration.
 
-GTK registers a separate development desktop entry matching `io.github.opensnitch.GtkInventory`. It installs the existing 64px PNG in the user data icon directory and references the file directly from the desktop entry, so KDE's taskbar does not require an optional icon theme or SVG renderer. The installed `opensnitch_ui.desktop` is untouched. All windows inherit the application icon; the private KWin check verifies the desktop ID, while GTK decodes the registered PNG. Tests isolate `XDG_DATA_HOME` as well as configuration/cache/runtime paths. The development entry is temporary migration integration and must be replaced with packaged GTK metadata at cutover.
+GTK registers a separate development desktop entry matching `io.github.opensnitch.GtkInventory`. It installs the existing 64px PNG in the user data icon directory and references the file directly from the desktop entry, so KDE's taskbar does not require an optional icon theme or SVG renderer. The system-installed `opensnitch_ui.desktop` is untouched; account-default mode adds a user override. The helper app-ID entry is hidden from the menu in that mode to avoid a duplicate launcher. All windows inherit the application icon; the private KWin check verifies the desktop ID, while GTK decodes the registered PNG. Tests isolate `XDG_DATA_HOME` as well as configuration/cache/runtime paths. The development entry is temporary migration integration and must be replaced with packaged GTK metadata at cutover.
 
 ## Activity and shared tables
 
@@ -164,7 +174,7 @@ ui/bin/opensnitch-gtk-defaults
 
 This installs `~/.local/bin/opensnitch-gtk`, a normal application-menu override at `~/.local/share/applications/opensnitch_ui.desktop`, and the matching login entry at `~/.config/autostart/opensnitch_ui.desktop`. The GTK app-ID desktop entry also uses that launcher, including pinned taskbar activation. Exact prior files and modes are saved under `~/.config/opensnitch/default-frontend-backup/`; `gtk-default.json` records the managed paths. The generated launcher uses this checkout and falls back to the installed Qt UI if it is unavailable, while avoiding an already occupied frontend socket.
 
-Login startup passes `--start-hidden`: GTK registers a native KDE StatusNotifierItem and starts the daemon session and connection prompts without mapping the main window. Application-menu and pinned launches omit that option and present the same running window. Repeated background startup leaves an existing window alone. Default mode uses standard single-instance GApplication activation. Closing the main window hides it while GTK continues handling the daemon and prompts. Tray click or **Open OpenSnitch** presents it; the tray tooltip and disabled status row report the authoritative daemon connection/interception status. **Quit OpenSnitch** exits the frontend and supervisor without restarting Qt or stopping the daemon. The separate **Return to Qt interface** menu action retains explicit rollback. Launching OpenSnitch again reopens the same window/backend. Logout/termination does not spawn a replacement Qt process during session shutdown. An explicit rollback remains available:
+Login startup passes `--start-hidden`: GTK registers a native KDE StatusNotifierItem and starts the daemon session and connection prompts without mapping the main window. Application-menu and pinned launches omit that option and present the same running window. Repeated background startup leaves an existing window alone. Default mode uses standard single-instance GApplication activation. Closing the main window hides it while GTK continues handling the daemon and prompts. Tray click or **Open OpenSnitch** presents it; the tray tooltip and disabled status row report daemon connection status and acknowledged interception state, or explicitly mark the latter unavailable. **Quit OpenSnitch** exits the frontend and supervisor without restarting Qt or stopping the daemon. The separate **Return to Qt interface** menu action retains explicit rollback. Launching OpenSnitch again reopens the same window/backend. Logout/termination does not spawn a replacement Qt process during session shutdown. An explicit rollback remains available:
 
 ```sh
 ~/.local/bin/opensnitch-gtk --rollback
@@ -176,7 +186,7 @@ Restore the original account launcher/login defaults (then use rollback if GTK i
 ui/bin/opensnitch-gtk-defaults --restore
 ```
 
-Work is paused here. Account login/menu overrides are installed and verified; repeated desktop launches reused the same live GTK PID. Isolated checks verified close/reopen, prompt handling while hidden, and KWin modal floating. The daemon and live rule-file metadata remained unchanged during the handoff. A full OS reboot was not performed. Next work resumes with the remaining parity checklist above; no further feature migration or Qt retirement is authorized by this wrap-up alone.
+Account login/menu overrides are installed and verified; repeated desktop launches reused the same live GTK PID. Isolated checks verified close/reopen, prompt handling while hidden, and KWin modal floating. The daemon and live rule-file metadata remained unchanged during the handoff. A full OS reboot was not performed. The remaining blocking-focused work and Qt retirement checkpoints are listed above.
 
 ### Native floating windows
 
@@ -194,7 +204,7 @@ dbus-run-session -- env PYTHONPATH=ui /usr/bin/python3 -m unittest ui.tests.test
 
 Private-bus checks exercise registration, PNG pixels, menu layouts/property filters/events, status updates, activation-token forwarding, and watcher replacement. The native fake-daemon check covers hidden startup, Open, prompts while hidden, missing-tray recovery, re-registration, and Quit. Live KDE registration/menu checks are performed separately without changing firewall rules. Login registration is verified without rebooting the workstation.
 
-Live KDE verification: Plasma registered exactly one OpenSnitch item with a 64×64 bundled pixmap and updated its tooltip to `Connected · Interception enabled`. Native Activate opened GTK; the exported Quit event exited GTK and its supervisor without launching Qt, with the daemon PID unchanged. GTK was relaunched using the login command and verified hidden with its tray item registered. Autostart retains `--start-hidden`. Visual user confirmation remains the checkpoint; no OS reboot was performed.
+Live KDE verification: Plasma registered exactly one OpenSnitch item with a 64×64 bundled pixmap. The tooltip now distinguishes connection status from acknowledged interception state; initial pause state is unavailable on daemon 1.7.2. Native Activate opened GTK; the exported Quit event exited GTK and its supervisor without launching Qt, with the daemon PID unchanged. GTK was relaunched using the login command and verified hidden with its tray item registered. Autostart retains `--start-hidden`. Visual user confirmation remains the checkpoint; no OS reboot was performed.
 
 ## Unavailable temporary-app cleanup
 
@@ -211,3 +221,16 @@ The window's App filtering On/Off toggle and tray Pause/Resume action use the ex
 The shared backend exposes immutable enabled/available/pending/error state. Requests wait for the daemon's acknowledgment. Daemon 1.7.2 keeps `isFirewallRunning=true` after pausing: that field reports the initialized firewall, not interception state. GTK therefore confirms the requested state only on acknowledgment and shows Not confirmed after reconnect rather than assuming On. Both explicit On and Off choices remain available while connected with unknown state. The controls remain unavailable during a pending command; failure, disconnect and timeout never produce a successful state. Request serials ignore late replies. The toggle is unavailable during pending policy/cleanup/checksum operations or connection prompts. The GUI and tray share this single state and refresh on subscription replacement.
 
 Isolated verification includes rejection, timeout/late reply, disconnect, external status, duplicate requests, operation guards, unchanged rule files, and native On/Off and tray round trips at 100% and 125% scaling. Run `run_gtk_virtual.py --check interception --scale 1` or `--scale 1.25`.
+
+## README screenshots
+
+The root README shows actual GTK widgets rendered with isolated sample records,
+not a capture of the account inventory. Regenerate on a private virtual desktop:
+
+```sh
+/usr/bin/python3 ui/tests/run_gtk_virtual.py --check screenshots --scale 1
+```
+
+Review `/tmp/opensnitch-docs-{apps,prompt}-{light,dark}.png` before copying them
+into `screenshots/gtk/`. The capture fixture never binds the live daemon socket
+or writes user configuration. See [capture details](../../../screenshots/gtk/README.md).
